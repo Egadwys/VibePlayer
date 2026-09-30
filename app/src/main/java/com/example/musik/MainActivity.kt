@@ -1,7 +1,9 @@
 package com.example.musik
+
 import android.Manifest.permission.*
 import android.app.Activity
 import android.content.ComponentName
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
@@ -10,15 +12,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.*
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,6 +37,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -44,6 +48,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.Player
 import androidx.media3.session.*
 import kotlinx.coroutines.delay
@@ -107,6 +114,24 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
+// FITUR 3: Visualizer berdenyut mengikuti state 'playing'
+@Composable fun VisualizerWave(playing: Boolean) {
+ val infiniteTransition = rememberInfiniteTransition(label = "wave")
+ val scale by infiniteTransition.animateFloat(
+  initialValue = 1f, targetValue = if (playing) 1.25f else 1f,
+  animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "s"
+ )
+ val alpha by infiniteTransition.animateFloat(
+  initialValue = 0.6f, targetValue = 0f,
+  animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "a"
+ )
+ val color = MaterialTheme.colorScheme.primary
+ Canvas(Modifier.size(300.dp)) {
+  drawCircle(color = color.copy(alpha = alpha), radius = (size.minDimension / 2) * scale)
+  drawCircle(color = color.copy(alpha = alpha * 0.4f), radius = (size.minDimension / 2) * (scale * 1.15f))
+ }
+}
+
 // ---------- Grid 3 kolom ----------
 @Composable fun <T> Grid(items:List<T>,key:(T)->Any,tile:@Composable (Int,T)->Unit){
  LazyVerticalGrid(GridCells.Fixed(3),contentPadding=PaddingValues(8.dp),
@@ -127,7 +152,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    }
    if(menu.isNotEmpty())Box{
     IconButton({m=true},Modifier.size(28.dp)){Icon(Icons.Default.MoreVert,null,Modifier.size(18.dp))}
-    DropdownMenu(m,{m=false}){menu.forEach{(t,a)->DropdownMenuItem({Text(t)},{a();m=false})}}
+    DropdownMenu(m,{m=false}){menu.forEach{(t,a)->DropdownMenuItem(text={Text(t)},onClick={a();m=false})}}
    }
   }
  }
@@ -144,7 +169,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 
 @Composable fun Groups(g:Map<String,List<Song>>,open:(String)->Unit){
  val keys=remember(g){g.keys.sorted()}
- val pick=remember(g){g.mapValues{it.value.random()}} // cover acak, dipilih ulang tiap halaman dibuka
+ val pick=remember(g){g.mapValues{it.value.random()}}
  Grid(keys,{it}){_,k->Tile(pick[k],k,"${g.getValue(k).size} lagu"){open(k)}}
 }
 
@@ -161,14 +186,16 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    Tile(ids.firstNotNullOfOrNull{byId[it]},n,"${ids.size} lagu",listOf("Hapus" to {pl.delete(n)})){open(n)}
   }
  }
- if(dlg)AlertDialog({dlg=false},confirmButton={TextButton({pl.create(name.trim());name="";dlg=false}){Text("Buat")}},
+ if(dlg)AlertDialog(onDismissRequest={dlg=false},confirmButton={TextButton({pl.create(name.trim());name="";dlg=false}){Text("Buat")}},
   title={Text("Playlist baru")},text={OutlinedTextField(name,{name=it},singleLine=true,label={Text("Nama")})})
 }
 
 // ---------- App ----------
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable fun App(mode:Int,onTheme:()->Unit){
  val c=LocalContext.current
+ val appSp = c.getSharedPreferences("AppState", Context.MODE_PRIVATE) 
+ 
  var songs by remember{mutableStateOf(loadSongs(c))}
  val pl=remember{Playlists(c)}
  var ctrl by remember{mutableStateOf<MediaController?>(null)}
@@ -176,12 +203,30 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  var playing by remember{mutableStateOf(false)}
  var shuffle by remember{mutableStateOf(false)}
  var repeat by remember{mutableIntStateOf(Player.REPEAT_MODE_OFF)}
- val pos=remember{mutableStateOf(0L)} // hanya dibaca Mini/Now, agar App tidak recompose tiap 250ms
+ val pos=remember{mutableStateOf(0L)}
  var showNow by remember{mutableStateOf(false)}
- var tab by remember{mutableIntStateOf(0)}
- var detail by remember{mutableStateOf<String?>(null)}
+ 
+ // FITUR 5: Load state folder/detail & tab terakhir dari cache SharedPreferences
+ var tab by remember{mutableIntStateOf(appSp.getInt("tab", 0))}
+ var detail by remember{mutableStateOf<String?>(appSp.getString("detail", null))}
+ val pagerState = rememberPagerState(initialPage = tab) { 4 }
 
- // Metadata dari file dulu; yang masih kosong disinkronkan dari internet (batch, di-cache)
+ LaunchedEffect(tab, detail) { appSp.edit().putInt("tab", tab).putString("detail", detail).apply() }
+ LaunchedEffect(pagerState.currentPage) { tab = pagerState.currentPage }
+ LaunchedEffect(tab) { pagerState.animateScrollToPage(tab) }
+
+ // FITUR 4: Simpan state musik terakhir saat aplikasi disembunyikan (onStop)
+ val lifecycleOwner = LocalLifecycleOwner.current
+ DisposableEffect(lifecycleOwner, nowId) {
+  val observer = LifecycleEventObserver { _, event ->
+   if (event == Lifecycle.Event.ON_STOP && nowId != null) {
+    appSp.edit().putString("last_id", nowId).putLong("last_pos", pos.value).apply()
+   }
+  }
+  lifecycleOwner.lifecycle.addObserver(observer)
+  onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+ }
+
  LaunchedEffect(Unit){
   val upd=HashMap<Long,Song>();var n=0
   for(s in songs.toList()){
@@ -194,11 +239,13 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   }
   if(upd.isNotEmpty())songs=songs.map{upd[it.id]?:it}
  }
+ 
  DisposableEffect(Unit){
   val f=MediaController.Builder(c,SessionToken(c,ComponentName(c,PlaybackService::class.java))).buildAsync()
   f.addListener({ctrl=f.get()},ContextCompat.getMainExecutor(c))
   onDispose{MediaController.releaseFuture(f)}
  }
+ 
  DisposableEffect(ctrl){
   val p=ctrl?:return@DisposableEffect onDispose{}
   nowId=p.currentMediaItem?.mediaId;playing=p.isPlaying;shuffle=p.shuffleModeEnabled;repeat=p.repeatMode
@@ -206,18 +253,34 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    nowId=q.currentMediaItem?.mediaId;playing=q.isPlaying;shuffle=q.shuffleModeEnabled;repeat=q.repeatMode}}
   p.addListener(l);onDispose{p.removeListener(l)}
  }
+ 
  LaunchedEffect(ctrl){while(true){pos.value=ctrl?.currentPosition?:0L;delay(250)}}
- BackHandler(showNow||detail!=null){if(showNow)showNow=false else detail=null}
 
- fun play(l:List<Song>,i:Int){ctrl?.run{setMediaItems(l.map{it.item()},i,0L);prepare();play()}}
  val byId=remember(songs){songs.associateBy{it.id}}
+ 
+ // FITUR 4: Restore/Prepare lagu terakhir saat dibuka
+ LaunchedEffect(ctrl) {
+  val p = ctrl ?: return@LaunchedEffect
+  if (p.mediaItemCount == 0) {
+   val lastId = appSp.getString("last_id", null)
+   val lastSong = byId[lastId?.toLongOrNull() ?: 0L]
+   if (lastSong != null) {
+    p.setMediaItem(lastSong.item())
+    p.prepare()
+    p.seekTo(appSp.getLong("last_pos", 0L))
+   }
+  }
+ }
+
+ BackHandler(showNow||detail!=null){if(showNow)showNow=false else detail=null}
+ fun play(l:List<Song>,i:Int){ctrl?.run{setMediaItems(l.map{it.item()},i,0L);prepare();play()}}
  val cur=remember(byId,nowId){nowId?.toLongOrNull()?.let{byId[it]}}
  val byFolder=remember(songs){songs.filter{it.folder!=null}.groupBy{it.folder!!}}
  val byAlbum=remember(songs){songs.groupBy{it.album}}
  val byArtist=remember(songs){songs.groupBy{it.artist}}
 
  Box{
- Scaffold(topBar={TopAppBar(title={Text(detail?.drop(2)?:"VibeMusic",maxLines=1)},
+  Scaffold(topBar={TopAppBar(title={Text(detail?.drop(2)?:"VibeMusic",maxLines=1)},
    navigationIcon={if(detail!=null)IconButton({detail=null}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null)}},
    actions={IconButton(onTheme){Icon(when(mode){0->Icons.Default.SettingsBrightness;1->Icons.Default.LightMode;else->Icons.Default.DarkMode},null)}})},
   bottomBar={Column{
@@ -226,31 +289,46 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
     listOf("Home" to Icons.Default.Home,"Album" to Icons.Default.Album,"Artis" to Icons.Default.Person,"Playlist" to Icons.AutoMirrored.Filled.QueueMusic)
      .forEachIndexed{i,(t,ic)->NavigationBarItem(tab==i,{tab=i;detail=null},{Icon(ic,null)},label={Text(t)})}
    }}}){pad->
-  Crossfade(Pair(tab,detail),Modifier.padding(pad).fillMaxSize(),tween(180),label="page"){(t,d)->
-   if(d!=null){
-    val n=d.drop(2)
-    val ids=if(d[0]=='p')pl.map[n] else null
-    val list=remember(d,songs,ids){when(d[0]){
-     'f'->songs.filter{it.folder==n};'a'->songs.filter{it.album==n};'r'->songs.filter{it.artist==n}
-     else->ids.orEmpty().mapNotNull{byId[it]}}}
+  
+  if(detail!=null){
+   val d = detail!!
+   val n=d.drop(2)
+   val ids=if(d[0]=='p')pl.map[n] else null
+   val list=remember(d,songs,ids){when(d[0]){
+    'f'->songs.filter{it.folder==n};'a'->songs.filter{it.album==n};'r'->songs.filter{it.artist==n}
+    else->ids.orEmpty().mapNotNull{byId[it]}}}
+   Box(Modifier.padding(pad).fillMaxSize().pointerInput(Unit){ 
+    // FITUR 6: Swipe ke Kanan untuk kembali ke Home/Menu sebelumnya dari dalam folder
+    detectHorizontalDragGestures { _, dragAmount -> if (dragAmount > 40) detail = null }
+   }) {
     SongGrid(list,nowId,pl,if(d[0]=='p')n else null){play(list,it)}
-   }else when(t){
-    0->HomeTab(byFolder){detail="f:$it"}
-    1->Groups(byAlbum){detail="a:$it"}
-    2->Groups(byArtist){detail="r:$it"}
-    else->PlaylistTab(pl,byId){detail="p:$it"}
+   }
+  } else {
+   // FITUR 6: Swipe Kiri Kanan untuk Navigasi Menu Utama
+   HorizontalPager(state = pagerState, modifier = Modifier.padding(pad).fillMaxSize()) { page ->
+    when(page){
+     0->HomeTab(byFolder){detail="f:$it"}
+     1->Groups(byAlbum){detail="a:$it"}
+     2->Groups(byArtist){detail="r:$it"}
+     else->PlaylistTab(pl,byId){detail="p:$it"}
+    }
    }
   }
  }
- AnimatedVisibility(showNow,enter=fadeIn(tween(200)),exit=fadeOut(tween(150))){
+ 
+ // FITUR 6: Animasi Buka Pemutar (Slide naik dari bawah)
+ AnimatedVisibility(showNow,enter=slideInVertically(tween(300)){it},exit=slideOutVertically(tween(300)){it}){
   cur?.let{Now(it,ctrl,playing,pos,shuffle,repeat){showNow=false}}
  }
  }
 }
 
 @Composable fun Mini(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,open:()->Unit){
- Surface(tonalElevation=3.dp,modifier=Modifier.clickable{open()}){Column{
-  LinearProgressIndicator({(pos.value.toFloat()/maxOf(s.dur,1L)).coerceIn(0f,1f)},Modifier.fillMaxWidth())
+ Surface(tonalElevation=3.dp,modifier=Modifier.clickable{open()}.pointerInput(Unit){
+  // FITUR 6: Swipe ke Atas pada Mini Player untuk Membuka Now Playing
+  detectVerticalDragGestures { _, dragAmount -> if (dragAmount < -30) open() }
+ }){Column{
+  LinearProgressIndicator(progress = { (pos.value.toFloat()/maxOf(s.dur,1L)).coerceIn(0f,1f) }, modifier = Modifier.fillMaxWidth())
   Row(Modifier.padding(horizontal=12.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
    Cover(s,Modifier.size(44.dp))
    Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(s.title,maxLines=1,fontWeight=FontWeight.Bold,overflow=TextOverflow.Ellipsis);Text(s.artist,maxLines=1,style=MaterialTheme.typography.bodySmall)}
@@ -272,23 +350,43 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  LaunchedEffect(s.id){lines=Lyrics.get(s)}
  val idx by remember(s.id){derivedStateOf{lines?.indexOfLast{it.ms<=pos.value}?:-1}}
  val on=MaterialTheme.colorScheme.primary;val off=MaterialTheme.colorScheme.onSurface.copy(alpha=0.5f)
- Surface(Modifier.fillMaxSize()){Box(Modifier.fillMaxSize()){
+ 
+ Surface(Modifier.fillMaxSize().pointerInput(Unit){
+  // FITUR 6: Swipe ke Bawah untuk Menutup Layar Pemutar
+  detectVerticalDragGestures { _, dragAmount -> if (dragAmount > 40) close() }
+ }){Box(Modifier.fillMaxSize()){
   Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal=24.dp)){
-   Spacer(Modifier.weight(1f))
-   // Lirik satu baris, fade saat berganti baris
-   Box(Modifier.fillMaxWidth().height(108.dp),Alignment.BottomStart){
+   
+   // FITUR 2 & 3: Cover Lingkaran Agak ke Atas dan Visualizer Berdenyut
+   Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+    VisualizerWave(playing) 
+    Cover(s, Modifier.size(240.dp).offset(y = (-10).dp), shape = CircleShape, px = 500)
+   }
+
+   // FITUR 1: Lirik dengan Animasi Transisi Halus (Pergantian Baris)
+   Box(Modifier.fillMaxWidth().height(100.dp), Alignment.Center){
     val ll=lines
     when{
      ll==null->Text("Memuat lirik…",color=off)
      ll.isEmpty()->Text("Lirik tidak ditemukan",color=off)
-     else->Crossfade(idx,animationSpec=tween(300),label="lyric"){i->
-      Text(ll.getOrNull(i)?.text?.ifBlank{"♪"}?:"",fontSize=24.sp,lineHeight=32.sp,fontWeight=FontWeight.Bold,maxLines=3,overflow=TextOverflow.Ellipsis)
+     else->AnimatedContent(
+      targetState = idx,
+      transitionSpec = {
+       (fadeIn(tween(400)) + slideInVertically(tween(400)){ it/2 }).togetherWith(
+        fadeOut(tween(400)) + slideOutVertically(tween(400)){ -it/2 })
+      }, label = "lyric"
+     ){ i ->
+      Text(ll.getOrNull(i)?.text?.ifBlank{"♪"}?:"", fontSize=22.sp, lineHeight=30.sp, 
+       fontWeight=FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
      }
     }
    }
+   
    Spacer(Modifier.height(12.dp))
-   Text(s.title,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth())
-   Text(s.artist,color=on,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth())
+   Text(s.title,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+   Text(s.artist,color=on,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+   Spacer(Modifier.height(16.dp))
+   
    Seek(pos,s.dur,ctrl)
    Row(Modifier.fillMaxWidth().padding(bottom=16.dp),Arrangement.SpaceEvenly,Alignment.CenterVertically){
     IconButton({ctrl?.let{it.shuffleModeEnabled=!it.shuffleModeEnabled}}){Icon(Icons.Default.Shuffle,null,tint=if(shuffle)on else off)}
