@@ -4,14 +4,26 @@ import android.appwidget.*
 import android.content.*
 import android.widget.RemoteViews
 import androidx.media3.common.*
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.*
 
+@OptIn(UnstableApi::class)
 class PlaybackService:MediaSessionService(){
  private var session:MediaSession?=null
  override fun onCreate(){
   super.onCreate()
-  val p=ExoPlayer.Builder(this).setAudioAttributes(AudioAttributes.DEFAULT,true).setHandleAudioBecomingNoisy(true).build()
+  val rf=object:DefaultRenderersFactory(this){
+   override fun buildAudioSink(context:Context,enableFloatOutput:Boolean,enableAudioTrackPlaybackParams:Boolean):AudioSink=
+    DefaultAudioSink.Builder(context).setEnableFloatOutput(enableFloatOutput)
+     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+     .setAudioProcessors(arrayOf<AudioProcessor>(SpectrumTap())).build()
+  }
+  val p=ExoPlayer.Builder(this,rf).setAudioAttributes(AudioAttributes.DEFAULT,true).setHandleAudioBecomingNoisy(true).build()
   p.addListener(object:Player.Listener{
    override fun onEvents(pl:Player,e:Player.Events){
     PlayerWidget.push(this@PlaybackService,pl.mediaMetadata.title?.toString(),pl.mediaMetadata.artist?.toString(),pl.isPlaying)
