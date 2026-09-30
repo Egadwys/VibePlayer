@@ -19,7 +19,7 @@ data class Song(val id:Long,val title:String,val artist:String,val album:String,
 fun Song.item()=MediaItem.Builder().setMediaId(id.toString()).setUri(uri)
  .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist).setAlbumTitle(album).build()).build()
 
-/** Metadata dibaca dari file (MediaStore). Data hasil sinkron internet (cache) hanya mengisi field yang kosong. */
+/** Memuat lagu secara default dari MediaStore */
 fun loadSongs(c:Context):List<Song>{
  val out=ArrayList<Song>()
  val meta=c.getSharedPreferences("meta",0)
@@ -38,6 +38,37 @@ fun loadSongs(c:Context):List<Song>{
   }
  }
  return out
+}
+
+/** Memuat lagu khusus dari folder yang dipilih manual oleh pengguna via SAF */
+fun loadSongsFromFolder(context: Context, folderUri: android.net.Uri): List<Song> {
+    val out = ArrayList<Song>()
+    val meta = context.getSharedPreferences("meta", 0)
+    fun cl(s:String?,d:String)=if(s.isNullOrBlank()||s=="<unknown>")d else s
+
+    val docFile = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
+    docFile?.listFiles()?.forEach { file ->
+        if (file.isFile && (file.type?.startsWith("audio/") == true || file.name?.endsWith(".mp3", true) == true)) {
+            context.contentResolver.query(
+                M.EXTERNAL_CONTENT_URI,
+                arrayOf(M._ID, M.TITLE, M.ARTIST, M.ALBUM, M.GENRE, M.DURATION),
+                "${M.TITLE} COLLATE NOCASE = ?",
+                arrayOf(file.name?.substringBeforeLast(".") ?: ""),
+                null
+            )?.use { cu ->
+                if (cu.moveToFirst()) {
+                    val id = cu.getLong(0)
+                    val title = cl(cu.getString(1), file.name ?: "Tanpa judul")
+                    val artist = cl(cu.getString(2), UA)
+                    val album = cl(cu.getString(3), UB)
+                    val genre = cl(cu.getString(4), UG)
+                    val dur = cu.getLong(5)
+                    out += Song(id, title, artist, album, genre, dur, docFile.name ?: "Folder Pilihan")
+                }
+            }
+        }
+    }
+    return out.ifEmpty { loadSongs(context) }
 }
 
 object Meta{
@@ -62,7 +93,6 @@ object Meta{
  }
 }
 
-/** Cover hanya dari file (embedded/folder art). Tidak ada -> null -> UI menampilkan piringan hitam. */
 object Covers{
  private class Lru(max:Int):android.util.LruCache<Long,Bitmap>(max){override fun sizeOf(key:Long,value:Bitmap):Int=value.byteCount}
  private val small=Lru(24*1024*1024)
