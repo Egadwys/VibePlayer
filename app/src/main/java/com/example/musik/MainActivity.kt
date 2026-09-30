@@ -116,19 +116,22 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 @Composable fun VisualizerWave(playing: Boolean) {
+ // Visualizer hanya tampil dan berdenyut jika playing == true
+ if (!playing) return
+
  val infiniteTransition = rememberInfiniteTransition(label = "wave")
  val scale by infiniteTransition.animateFloat(
-  initialValue = 1f, targetValue = if (playing) 1.25f else 1f,
+  initialValue = 1f, targetValue = 1.15f,
   animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "s"
  )
  val alpha by infiniteTransition.animateFloat(
-  initialValue = 0.6f, targetValue = 0f,
+  initialValue = 0.5f, targetValue = 0f,
   animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "a"
  )
  val color = MaterialTheme.colorScheme.primary
- Canvas(Modifier.size(300.dp)) {
+ Canvas(Modifier.size(210.dp)) {
   drawCircle(color = color.copy(alpha = alpha), radius = (size.minDimension / 2) * scale)
-  drawCircle(color = color.copy(alpha = alpha * 0.4f), radius = (size.minDimension / 2) * (scale * 1.15f))
+  drawCircle(color = color.copy(alpha = alpha * 0.4f), radius = (size.minDimension / 2) * (scale * 1.1f))
  }
 }
 
@@ -146,8 +149,8 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   Row(verticalAlignment=Alignment.CenterVertically){
    Column(Modifier.weight(1f).padding(top=6.dp)){
     Text(title,maxLines=1,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.labelLarge,
-     color=if(active)MaterialTheme.colorScheme.primary else Color.Unspecified)
-    Text(sub,maxLines=1,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+     color=if(active)MaterialTheme.colorScheme.primary else Color.Unspecified, textAlign = TextAlign.Start)
+    Text(sub,maxLines=1,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Start)
    }
    if(menu.isNotEmpty())Box{
     IconButton({m=true},Modifier.size(28.dp)){Icon(Icons.Default.MoreVert,null,Modifier.size(18.dp))}
@@ -173,6 +176,8 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 @Composable fun HomeTab(g:Map<String,List<Song>>,open:(String)->Unit){
+ val keys=remember(g){g.keys.sorted()}
+ val pick=remember(g){g.mapValues{it.value.random()}}
  if(g.isEmpty())Box(Modifier.fillMaxSize(),Alignment.Center){Text("Tidak ada lagu di folder ini")} else Groups(g,open)
 }
 
@@ -346,7 +351,10 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   LinearProgressIndicator(progress = { (pos.value.toFloat()/maxOf(s.dur,1L)).coerceIn(0f,1f) }, modifier = Modifier.fillMaxWidth())
   Row(Modifier.padding(horizontal=12.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
    Cover(s,Modifier.size(44.dp))
-   Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(s.title,maxLines=1,fontWeight=FontWeight.Bold,overflow=TextOverflow.Ellipsis);Text(s.artist,maxLines=1,style=MaterialTheme.typography.bodySmall)}
+   Column(Modifier.weight(1f).padding(horizontal=12.dp)){
+    Text(s.title,maxLines=1,fontWeight=FontWeight.Bold,overflow=TextOverflow.Ellipsis, textAlign = TextAlign.Start)
+    Text(s.artist,maxLines=1,style=MaterialTheme.typography.bodySmall, textAlign = TextAlign.Start)
+   }
    IconButton({ctrl?.seekToPrevious()}){Icon(Icons.Default.SkipPrevious,null)}
    IconButton({if(playing)ctrl?.pause() else ctrl?.play()}){Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null)}
    IconButton({ctrl?.seekToNext()}){Icon(Icons.Default.SkipNext,null)}
@@ -373,14 +381,14 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    
    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
     VisualizerWave(playing) 
-    Cover(s, Modifier.size(240.dp).offset(y = (-10).dp), shape = CircleShape, px = 500)
+    Cover(s, Modifier.size(220.dp).offset(y = (-10).dp), shape = CircleShape, px = 500)
    }
 
-   Box(Modifier.fillMaxWidth().height(100.dp), Alignment.Center){
+   Box(Modifier.fillMaxWidth().height(100.dp), Alignment.CenterStart){
     val ll=lines
     when{
-     ll==null->Text("Memuat lirik…",color=off)
-     ll.isEmpty()->Text("Lirik tidak ditemukan",color=off)
+     ll==null->Text("Memuat lirik…",color=off, textAlign = TextAlign.Start)
+     ll.isEmpty()->Text("Lirik tidak ditemukan",color=off, textAlign = TextAlign.Start)
      else->AnimatedContent(
       targetState = idx,
       transitionSpec = {
@@ -389,14 +397,14 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
       }, label = "lyric"
      ){ i ->
       Text(ll.getOrNull(i)?.text?.ifBlank{"♪"}?:"", fontSize=22.sp, lineHeight=30.sp, 
-       fontWeight=FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+       fontWeight=FontWeight.Bold, textAlign = TextAlign.Start, modifier = Modifier.fillMaxWidth())
      }
     }
    }
    
    Spacer(Modifier.height(12.dp))
-   Text(s.title,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-   Text(s.artist,color=on,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+   Text(s.title,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+   Text(s.artist,color=on,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
    Spacer(Modifier.height(16.dp))
    
    Seek(pos,s.dur,ctrl)
