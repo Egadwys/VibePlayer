@@ -1,6 +1,7 @@
 package com.example.musik
 import android.content.*
 import android.graphics.Bitmap
+import android.net.Uri
 import android.provider.MediaStore.Audio.Media as M
 import android.util.Size
 import androidx.compose.runtime.mutableStateMapOf
@@ -42,7 +43,6 @@ fun loadSongs(c:Context):List<Song>{
 
 /** Memuat lagu dengan filter folder pilihan user melalui MediaStore */
 fun loadSongsFromFolder(context: Context, folderUri: Uri): List<Song> {
-    // Menggunakan pemindaian MediaStore standar yang aman dan kompatibel penuh
     return loadSongs(context)
 }
 
