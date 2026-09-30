@@ -4,12 +4,15 @@ import android.Manifest.permission.*
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.*
+import androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
@@ -31,7 +34,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Color
@@ -65,7 +67,7 @@ class MainActivity:ComponentActivity(){
   surfaceVariant=Color(0xFF161616),surfaceContainer=Color(0xFF0C0C0C))
  else lightColorScheme(primary=Color(0xFF00796B))
  val view=LocalView.current
- SideEffect{ // ikon status bar & navigation bar mengikuti tema aplikasi (hitam di mode terang)
+ SideEffect{
   (view.context as? Activity)?.window?.let{w->
    val ic=WindowCompat.getInsetsController(w,view)
    ic.isAppearanceLightStatusBars=!dark;ic.isAppearanceLightNavigationBars=!dark
@@ -92,7 +94,6 @@ class MainActivity:ComponentActivity(){
 
 fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 
-// ---------- Cover & visual ----------
 @Composable fun Vinyl(m:Modifier=Modifier){
  val bg=MaterialTheme.colorScheme.surfaceVariant
  Canvas(m.background(bg)){
@@ -114,7 +115,6 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
-// FITUR 3: Visualizer berdenyut mengikuti state 'playing'
 @Composable fun VisualizerWave(playing: Boolean) {
  val infiniteTransition = rememberInfiniteTransition(label = "wave")
  val scale by infiniteTransition.animateFloat(
@@ -132,7 +132,6 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
-// ---------- Grid 3 kolom ----------
 @Composable fun <T> Grid(items:List<T>,key:(T)->Any,tile:@Composable (Int,T)->Unit){
  LazyVerticalGrid(GridCells.Fixed(3),contentPadding=PaddingValues(8.dp),
   horizontalArrangement=Arrangement.spacedBy(6.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
@@ -174,7 +173,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 @Composable fun HomeTab(g:Map<String,List<Song>>,open:(String)->Unit){
- if(g.isEmpty())Box(Modifier.fillMaxSize(),Alignment.Center){Text("Tidak ada lagu di folder Music")} else Groups(g,open)
+ if(g.isEmpty())Box(Modifier.fillMaxSize(),Alignment.Center){Text("Tidak ada lagu di folder ini")} else Groups(g,open)
 }
 
 @Composable fun PlaylistTab(pl:Playlists,byId:Map<Long,Song>,open:(String)->Unit){
@@ -190,13 +189,27 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   title={Text("Playlist baru")},text={OutlinedTextField(name,{name=it},singleLine=true,label={Text("Nama")})})
 }
 
-// ---------- App ----------
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable fun App(mode:Int,onTheme:()->Unit){
  val c=LocalContext.current
  val appSp = c.getSharedPreferences("AppState", Context.MODE_PRIVATE) 
  
- var songs by remember{mutableStateOf(loadSongs(c))}
+ val savedUriString = appSp.getString("selected_folder_uri", null)
+ var songs by remember {
+  mutableStateOf(
+   if (savedUriString != null) loadSongsFromFolder(c, Uri.parse(savedUriString))
+   else loadSongs(c)
+  )
+ }
+
+ val folderPickerLauncher = rememberLauncherForActivityResult(OpenDocumentTree()) { uri ->
+  if (uri != null) {
+   c.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+   appSp.edit().putString("selected_folder_uri", uri.toString()).apply()
+   songs = loadSongsFromFolder(c, uri)
+  }
+ }
+
  val pl=remember{Playlists(c)}
  var ctrl by remember{mutableStateOf<MediaController?>(null)}
  var nowId by remember{mutableStateOf<String?>(null)}
@@ -206,7 +219,6 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  val pos=remember{mutableStateOf(0L)}
  var showNow by remember{mutableStateOf(false)}
  
- // FITUR 5: Load state folder/detail & tab terakhir dari cache SharedPreferences
  var tab by remember{mutableIntStateOf(appSp.getInt("tab", 0))}
  var detail by remember{mutableStateOf<String?>(appSp.getString("detail", null))}
  val pagerState = rememberPagerState(initialPage = tab) { 4 }
@@ -215,7 +227,6 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  LaunchedEffect(pagerState.currentPage) { tab = pagerState.currentPage }
  LaunchedEffect(tab) { pagerState.animateScrollToPage(tab) }
 
- // FITUR 4: Simpan state musik terakhir saat aplikasi disembunyikan (onStop)
  val lifecycleOwner = LocalLifecycleOwner.current
  DisposableEffect(lifecycleOwner, nowId) {
   val observer = LifecycleEventObserver { _, event ->
@@ -258,7 +269,6 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 
  val byId=remember(songs){songs.associateBy{it.id}}
  
- // FITUR 4: Restore/Prepare lagu terakhir saat dibuka
  LaunchedEffect(ctrl) {
   val p = ctrl ?: return@LaunchedEffect
   if (p.mediaItemCount == 0) {
@@ -280,9 +290,18 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  val byArtist=remember(songs){songs.groupBy{it.artist}}
 
  Box{
-  Scaffold(topBar={TopAppBar(title={Text(detail?.drop(2)?:"VibeMusic",maxLines=1)},
-   navigationIcon={if(detail!=null)IconButton({detail=null}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null)}},
-   actions={IconButton(onTheme){Icon(when(mode){0->Icons.Default.SettingsBrightness;1->Icons.Default.LightMode;else->Icons.Default.DarkMode},null)}})},
+  Scaffold(topBar={
+   TopAppBar(
+    title={Text(detail?.drop(2)?:"VibeMusic",maxLines=1)},
+    navigationIcon={if(detail!=null)IconButton({detail=null}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null)}},
+    actions={
+     IconButton({ folderPickerLauncher.launch(null) }) {
+      Icon(Icons.Default.FolderOpen, contentDescription = "Pilih Folder")
+     }
+     IconButton(onTheme){Icon(when(mode){0->Icons.Default.SettingsBrightness;1->Icons.Default.LightMode;else->Icons.Default.DarkMode},null)}
+    }
+   )
+  },
   bottomBar={Column{
    if(cur!=null)Mini(cur,ctrl,playing,pos){showNow=true}
    NavigationBar{
@@ -298,13 +317,11 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
     'f'->songs.filter{it.folder==n};'a'->songs.filter{it.album==n};'r'->songs.filter{it.artist==n}
     else->ids.orEmpty().mapNotNull{byId[it]}}}
    Box(Modifier.padding(pad).fillMaxSize().pointerInput(Unit){ 
-    // FITUR 6: Swipe ke Kanan untuk kembali ke Home/Menu sebelumnya dari dalam folder
     detectHorizontalDragGestures { _, dragAmount -> if (dragAmount > 40) detail = null }
    }) {
     SongGrid(list,nowId,pl,if(d[0]=='p')n else null){play(list,it)}
    }
   } else {
-   // FITUR 6: Swipe Kiri Kanan untuk Navigasi Menu Utama
    HorizontalPager(state = pagerState, modifier = Modifier.padding(pad).fillMaxSize()) { page ->
     when(page){
      0->HomeTab(byFolder){detail="f:$it"}
@@ -316,7 +333,6 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   }
  }
  
- // FITUR 6: Animasi Buka Pemutar (Slide naik dari bawah)
  AnimatedVisibility(showNow,enter=slideInVertically(tween(300)){it},exit=slideOutVertically(tween(300)){it}){
   cur?.let{Now(it,ctrl,playing,pos,shuffle,repeat){showNow=false}}
  }
@@ -325,7 +341,6 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 
 @Composable fun Mini(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,open:()->Unit){
  Surface(tonalElevation=3.dp,modifier=Modifier.clickable{open()}.pointerInput(Unit){
-  // FITUR 6: Swipe ke Atas pada Mini Player untuk Membuka Now Playing
   detectVerticalDragGestures { _, dragAmount -> if (dragAmount < -30) open() }
  }){Column{
   LinearProgressIndicator(progress = { (pos.value.toFloat()/maxOf(s.dur,1L)).coerceIn(0f,1f) }, modifier = Modifier.fillMaxWidth())
@@ -352,18 +367,15 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  val on=MaterialTheme.colorScheme.primary;val off=MaterialTheme.colorScheme.onSurface.copy(alpha=0.5f)
  
  Surface(Modifier.fillMaxSize().pointerInput(Unit){
-  // FITUR 6: Swipe ke Bawah untuk Menutup Layar Pemutar
   detectVerticalDragGestures { _, dragAmount -> if (dragAmount > 40) close() }
  }){Box(Modifier.fillMaxSize()){
   Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal=24.dp)){
    
-   // FITUR 2 & 3: Cover Lingkaran Agak ke Atas dan Visualizer Berdenyut
    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
     VisualizerWave(playing) 
     Cover(s, Modifier.size(240.dp).offset(y = (-10).dp), shape = CircleShape, px = 500)
    }
 
-   // FITUR 1: Lirik dengan Animasi Transisi Halus (Pergantian Baris)
    Box(Modifier.fillMaxWidth().height(100.dp), Alignment.Center){
     val ll=lines
     when{
