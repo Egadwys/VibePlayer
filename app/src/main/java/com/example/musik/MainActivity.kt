@@ -127,14 +127,14 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "a"
  )
  val color = MaterialTheme.colorScheme.primary
- Canvas(Modifier.size(210.dp)) {
+ Canvas(Modifier.size(220.dp)) {
   drawCircle(color = color.copy(alpha = alpha), radius = (size.minDimension / 2) * scale)
   drawCircle(color = color.copy(alpha = alpha * 0.4f), radius = (size.minDimension / 2) * (scale * 1.1f))
  }
 }
 
 @Composable fun <T> Grid(items:List<T>,key:(T)->Any,tile:@Composable (Int,T)->Unit){
- LazyVerticalGrid(GridCells.Fixed(3),contentPadding=PaddingValues(8.dp),
+ LazyVerticalGrid(GridCells.Fixed(3),Modifier.fillMaxSize(),contentPadding=PaddingValues(8.dp),
   horizontalArrangement=Arrangement.spacedBy(6.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
   itemsIndexed(items,key={_,t->key(t)}){i,t->tile(i,t)}
  }
@@ -225,19 +225,31 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  val pagerState = rememberPagerState(initialPage = tab) { 4 }
 
  LaunchedEffect(tab, detail) { appSp.edit().putInt("tab", tab).putString("detail", detail).apply() }
- LaunchedEffect(pagerState.currentPage) { tab = pagerState.currentPage }
- LaunchedEffect(tab) { pagerState.animateScrollToPage(tab) }
+ LaunchedEffect(pagerState.settledPage) { tab = pagerState.settledPage }
+ LaunchedEffect(tab) { if (pagerState.currentPage != tab) pagerState.animateScrollToPage(tab) }
+
+ var restored by remember{mutableStateOf(false)}
+ fun savePos(){
+  if(!restored)return
+  val p=ctrl?:return
+  runCatching{
+   val id=p.currentMediaItem?.mediaId?:return
+   appSp.edit().putString("last_id",id).putLong("last_pos",p.currentPosition).apply()
+  }
+ }
 
  val lifecycleOwner = LocalLifecycleOwner.current
- DisposableEffect(lifecycleOwner, nowId) {
+ DisposableEffect(lifecycleOwner) {
   val observer = LifecycleEventObserver { _, event ->
-   if (event == Lifecycle.Event.ON_STOP && nowId != null) {
-    appSp.edit().putString("last_id", nowId).putLong("last_pos", pos.value).apply()
-   }
+   if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) savePos()
   }
   lifecycleOwner.lifecycle.addObserver(observer)
-  onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  onDispose { savePos(); lifecycleOwner.lifecycle.removeObserver(observer) }
  }
+
+ // simpan posisi saat pause / ganti lagu, dan tiap detik saat sedang diputar
+ LaunchedEffect(playing, nowId) { savePos() }
+ LaunchedEffect(playing, ctrl) { while(playing){ delay(1000); savePos() } }
 
  LaunchedEffect(Unit){
   val upd=HashMap<Long,Song>();var n=0
@@ -276,11 +288,12 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    val lastId = appSp.getString("last_id", null)
    val lastSong = byId[lastId?.toLongOrNull() ?: 0L]
    if (lastSong != null) {
-    p.setMediaItem(lastSong.item())
+    val lastPos = appSp.getLong("last_pos", 0L)
+    p.setMediaItem(lastSong.item(), lastPos)
     p.prepare()
-    p.seekTo(appSp.getLong("last_pos", 0L))
    }
   }
+  restored = true
  }
 
  BackHandler(showNow||detail!=null){if(showNow)showNow=false else detail=null}
@@ -323,7 +336,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
     SongGrid(list,nowId,pl,if(d[0]=='p')n else null){play(list,it)}
    }
   } else {
-   HorizontalPager(state = pagerState, modifier = Modifier.padding(pad).fillMaxSize()) { page ->
+   HorizontalPager(state = pagerState, modifier = Modifier.padding(pad).fillMaxSize(), verticalAlignment = Alignment.Top) { page ->
     when(page){
      0->HomeTab(byFolder){detail="f:$it"}
      1->Groups(byAlbum){detail="a:$it"}
@@ -377,7 +390,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    
    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
     VisualizerWave(playing) 
-    Cover(s, Modifier.size(220.dp).offset(y = (-10).dp), shape = CircleShape, px = 500)
+    Cover(s, Modifier.size(220.dp), shape = CircleShape, px = 500)
    }
 
    Box(Modifier.fillMaxWidth().height(100.dp), Alignment.CenterStart){
