@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.*
@@ -116,6 +117,12 @@ class MainActivity:ComponentActivity(){
  if(granted)content() else Box(Modifier.fillMaxSize(),Alignment.Center){Button({l.launch(need)}){Text("Izinkan akses musik")}}
 }
 
+/** Getaran lembut (tick) untuk interaksi. Mengikuti pengaturan "getaran sentuh" sistem. */
+@Composable fun rememberTick():()->Unit{
+ val v=LocalView.current
+ return remember(v){{v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);Unit}}
+}
+
 fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 
 @Composable fun Vinyl(m:Modifier=Modifier){
@@ -144,11 +151,15 @@ private val WK = intArrayOf(2, 3, 5, 8, 13)
 private val WN = intArrayOf(1, 2, -3, 4, -6)
 
 @Composable fun VisualizerWave(playing: Boolean, active: Boolean = true) {
- if (!active) return // tidak digambar / tidak dianimasi saat player tersembunyi
+ // energi turun halus saat pause; setelah habis, gelombang dilepas dari komposisi (tidak digambar & tidak dianimasi)
+ val energy by animateFloatAsState(if (playing) 1f else 0f, tween(450), label = "e")
+ if (active && (playing || energy > 0.01f)) WaveCanvas(energy)
+}
+
+@Composable private fun WaveCanvas(energy: Float) {
  val tr = rememberInfiniteTransition(label = "wave")
  val time by tr.animateFloat(0f, (2 * PI).toFloat(),
   infiniteRepeatable(tween(16000, easing = LinearEasing)), label = "t")
- val energy by animateFloatAsState(if (playing) 1f else 0.2f, tween(900), label = "e")
  val cs = MaterialTheme.colorScheme
  val c1 = cs.primary; val c2 = cs.tertiary; val c3 = cs.secondary
  val steps = 120; val rings = 32; val bands = 8; val per = rings / bands
@@ -176,7 +187,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  Canvas(Modifier.fillMaxWidth().aspectRatio(1f)) {
   val cx = size.width / 2; val cy = size.height / 2
   val inner = 130.dp.toPx()
-  val spread = (size.width / 2 + 22.dp.toPx() - inner).coerceAtLeast(30.dp.toPx())
+  val spread = 110.dp.toPx() // jarak jangkauan gelombang dari cover (naikkan/turunkan sesuai selera)
   val tm = time; val e = energy
   // denyut ritmis (~120 bpm) + amplitudo tiap harmonik yang berubah pelan -> bentuk terus bermorfosis
   val pb = 0.5f + 0.5f * sin(tm * 32f); val pulse = pb * pb * pb * pb * pb * pb
@@ -186,7 +197,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
   amp[3] = (0.35f + 0.35f * sin(tm * 5f + 1f)) * (0.4f + 0.6f * pulse)
   amp[4] = 0.30f * (0.3f + 0.7f * pulse)
   val norm = amp.sum()
-  val boost = 0.85f + 0.30f * pulse
+  val boost = 0.85f + 0.55f * pulse
   // cahaya lembut di belakang ring
   drawCircle(Brush.radialGradient(listOf(c1.copy(alpha = 0.22f * e), Color.Transparent),
    Offset(cx, cy), inner + spread * 1.1f), inner + spread * 1.1f, Offset(cx, cy))
@@ -214,7 +225,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
    }
    val tb = (bd + 0.5f) / bands
    val col = if (tb < 0.5f) lerp(c1, c2, tb * 2f) else lerp(c2, c3, (tb - 0.5f) * 2f)
-   drawPath(path, col.copy(alpha = 0.95f - 0.78f * tb), style = stroke)
+   drawPath(path, col.copy(alpha = (0.95f - 0.78f * tb) * e), style = stroke)
   }
  }
 }
@@ -229,7 +240,8 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
 
 @Composable fun Tile(cover:Song?,title:String,sub:String,menu:List<Pair<String,()->Unit>> = emptyList(),active:Boolean=false,onClick:()->Unit){
  var m by remember{mutableStateOf(false)}
- Column(Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick=onClick).padding(4.dp)){
+ val tick=rememberTick()
+ Column(Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick={tick();onClick()}).padding(4.dp)){
   Cover(cover,Modifier.fillMaxWidth())
   Row(verticalAlignment=Alignment.CenterVertically){
    Column(Modifier.weight(1f).padding(top=6.dp)){
@@ -238,8 +250,8 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
     Text(sub,maxLines=1,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Start)
    }
    if(menu.isNotEmpty())Box{
-    IconButton({m=true},Modifier.size(28.dp)){Icon(Icons.Default.MoreVert,null,Modifier.size(18.dp))}
-    DropdownMenu(m,{m=false}){menu.forEach{(t,a)->DropdownMenuItem(text={Text(t)},onClick={a();m=false})}}
+    IconButton({tick();m=true},Modifier.size(28.dp)){Icon(Icons.Default.MoreVert,null,Modifier.size(18.dp))}
+    DropdownMenu(m,{m=false}){menu.forEach{(t,a)->DropdownMenuItem(text={Text(t)},onClick={tick();a();m=false})}}
    }
   }
  }
@@ -266,8 +278,9 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
 
 @Composable fun PlaylistTab(pl:Playlists,byId:Map<Long,Song>,open:(String)->Unit){
  var dlg by remember{mutableStateOf(false)};var name by remember{mutableStateOf("")}
+ val tick=rememberTick()
  Column{
-  FilledTonalButton({dlg=true},Modifier.padding(horizontal=12.dp)){Icon(Icons.Default.Add,null);Spacer(Modifier.width(8.dp));Text("Playlist baru")}
+  FilledTonalButton({tick();dlg=true},Modifier.padding(horizontal=12.dp)){Icon(Icons.Default.Add,null);Spacer(Modifier.width(8.dp));Text("Playlist baru")}
   Grid(pl.map.keys.sorted(),{it}){_,n->
    val ids=pl.map[n].orEmpty()
    Tile(ids.firstNotNullOfOrNull{byId[it]},n,"${ids.size} lagu",listOf("Hapus" to {pl.delete(n)})){open(n)}
@@ -280,6 +293,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable fun App(mode:Int,onTheme:()->Unit){
  val c=LocalContext.current
+ val tick=rememberTick()
  val appSp = c.getSharedPreferences("AppState", Context.MODE_PRIVATE) 
  
  LaunchedEffect(Unit){ appSp.edit().remove("selected_folder_uri").apply() }
@@ -307,7 +321,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  var navTarget by remember{mutableStateOf<Int?>(null)}
  var navJob by remember{mutableStateOf<Job?>(null)}
  // swipe -> update tab (diabaikan selama perpindahan dari tap navbar sedang berjalan)
- LaunchedEffect(pagerState) { snapshotFlow{pagerState.settledPage}.collect{ if(navTarget==null) tab = it } }
+ LaunchedEffect(pagerState) { snapshotFlow{pagerState.settledPage}.collect{ if(navTarget==null){ if(tab!=it) tick(); tab = it } } }
  fun selectTab(i:Int){
   val wasDetail = detail != null
   if(!wasDetail && navTarget==i) return          // sudah menuju tab ini
@@ -406,6 +420,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  val dragState = rememberDraggableState{ dy -> sheetP = (sheetP - dy/hPx).coerceIn(0f,1f) }
  fun settle(v:Float){
   val target = when{ v < -700f -> 1f; v > 700f -> 0f; sheetP>0.5f -> 1f; else -> 0f }
+  if((target==1f)!=expanded) tick()
   animateSheet(target, -v/hPx)
  }
  // geser naik: buka pemutar, geser turun: tutup (mengikuti jari)
@@ -425,9 +440,9 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
   Scaffold(topBar={
    TopAppBar(
     title={AnimatedContent(targetState=title,label="title"){t->Text(t,maxLines=1,overflow=TextOverflow.Ellipsis)}},
-    navigationIcon={if(detail!=null)IconButton({detail=null}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null)}},
+    navigationIcon={if(detail!=null)IconButton({tick();detail=null}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null)}},
     actions={
-     IconButton(onTheme){Icon(when(mode){0->Icons.Default.SettingsBrightness;1->Icons.Default.LightMode;else->Icons.Default.DarkMode},null)}
+     IconButton({tick();onTheme()}){Icon(when(mode){0->Icons.Default.SettingsBrightness;1->Icons.Default.LightMode;else->Icons.Default.DarkMode},null)}
     }
    )
   },
@@ -474,6 +489,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
 @OptIn(ExperimentalFoundationApi::class)
 @Composable fun FloatingNav(tab:Int,cur:Song?,playing:Boolean,pos:State<Long>,ctrl:MediaController?,dragMod:Modifier,onSelect:(Int)->Unit){
  val items=listOf("Home" to Icons.Default.Home,"Album" to Icons.Default.Album,"Artis" to Icons.Default.Person,"Playlist" to Icons.AutoMirrored.Filled.QueueMusic)
+ val tick=rememberTick()
  Box(dragMod.fillMaxWidth().navigationBarsPadding().padding(horizontal=24.dp,vertical=12.dp),contentAlignment=Alignment.Center){
   Surface(shape=RoundedCornerShape(50),color=MaterialTheme.colorScheme.surfaceContainerHigh,tonalElevation=0.dp,shadowElevation=10.dp){
    Row(Modifier.animateContentSize().padding(8.dp),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically){
@@ -481,14 +497,14 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
      val sel=tab==i
      Box(Modifier.width(56.dp).height(48.dp).clip(CircleShape)
       .background(if(sel)MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-      .clickable{onSelect(i)},contentAlignment=Alignment.Center){
+      .clickable{tick();onSelect(i)},contentAlignment=Alignment.Center){
       Icon(ic,t,tint=if(sel)MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
      }
     }
     if(cur!=null){
      Spacer(Modifier.width(4.dp))
      // tombol play/pause dengan cover art sebagai background (tap: play/pause, geser naik: buka pemutar)
-     Box(Modifier.size(48.dp).clip(CircleShape).clickable{if(playing)ctrl?.pause() else ctrl?.play()},contentAlignment=Alignment.Center){
+     Box(Modifier.size(48.dp).clip(CircleShape).clickable{tick();if(playing)ctrl?.pause() else ctrl?.play()},contentAlignment=Alignment.Center){
       Cover(cur,Modifier.fillMaxSize().padding(4.dp),shape=CircleShape,px=200)
       Box(Modifier.fillMaxSize().padding(4.dp).clip(CircleShape).background(Color.Black.copy(alpha=0.35f)))
       Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null,tint=Color.White)
@@ -504,7 +520,8 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
 @Composable fun Seek(pos:State<Long>,dur:Long,ctrl:MediaController?){
  val d=maxOf(dur,1L).toFloat()
  val p=pos.value
- Slider(p.toFloat().coerceIn(0f,d),{ctrl?.seekTo(it.toLong())},valueRange=0f..d)
+ val tick=rememberTick()
+ Slider(p.toFloat().coerceIn(0f,d),{ctrl?.seekTo(it.toLong())},valueRange=0f..d,onValueChangeFinished={tick()})
  Row(Modifier.fillMaxWidth(),Arrangement.SpaceBetween){Text(fmt(p));Text(fmt(dur))}
 }
 
@@ -514,6 +531,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  val idx by remember(s.id){derivedStateOf{lines?.indexOfLast{it.ms<=pos.value}?:-1}}
  val on=MaterialTheme.colorScheme.primary;val off=MaterialTheme.colorScheme.onSurface.copy(alpha=0.5f)
  
+ val tick=rememberTick()
  Surface(Modifier.fillMaxSize().then(dragMod),shape=RoundedCornerShape(topStart=28.dp,topEnd=28.dp)){Box(Modifier.fillMaxSize()){
   Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal=24.dp)){
    
@@ -547,14 +565,14 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
    
    Seek(pos,s.dur,ctrl)
    Row(Modifier.fillMaxWidth().padding(bottom=16.dp),Arrangement.SpaceEvenly,Alignment.CenterVertically){
-    IconButton({ctrl?.let{it.shuffleModeEnabled=!it.shuffleModeEnabled}}){Icon(Icons.Default.Shuffle,null,tint=if(shuffle)on else off)}
-    IconButton({ctrl?.seekToPrevious()},Modifier.size(48.dp)){Icon(Icons.Default.SkipPrevious,null,Modifier.size(32.dp))}
-    FilledIconButton({if(playing)ctrl?.pause() else ctrl?.play()},Modifier.size(72.dp)){Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null,Modifier.size(40.dp))}
-    IconButton({ctrl?.seekToNext()},Modifier.size(48.dp)){Icon(Icons.Default.SkipNext,null,Modifier.size(32.dp))}
-    IconButton({ctrl?.let{it.repeatMode=when(it.repeatMode){Player.REPEAT_MODE_OFF->Player.REPEAT_MODE_ALL;Player.REPEAT_MODE_ALL->Player.REPEAT_MODE_ONE;else->Player.REPEAT_MODE_OFF}}}){
+    IconButton({tick();ctrl?.let{it.shuffleModeEnabled=!it.shuffleModeEnabled}}){Icon(Icons.Default.Shuffle,null,tint=if(shuffle)on else off)}
+    IconButton({tick();ctrl?.seekToPrevious()},Modifier.size(48.dp)){Icon(Icons.Default.SkipPrevious,null,Modifier.size(32.dp))}
+    FilledIconButton({tick();if(playing)ctrl?.pause() else ctrl?.play()},Modifier.size(72.dp)){Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null,Modifier.size(40.dp))}
+    IconButton({tick();ctrl?.seekToNext()},Modifier.size(48.dp)){Icon(Icons.Default.SkipNext,null,Modifier.size(32.dp))}
+    IconButton({tick();ctrl?.let{it.repeatMode=when(it.repeatMode){Player.REPEAT_MODE_OFF->Player.REPEAT_MODE_ALL;Player.REPEAT_MODE_ALL->Player.REPEAT_MODE_ONE;else->Player.REPEAT_MODE_OFF}}}){
      Icon(if(repeat==Player.REPEAT_MODE_ONE)Icons.Default.RepeatOne else Icons.Default.Repeat,null,tint=if(repeat==Player.REPEAT_MODE_OFF)off else on)}
    }
   }
-  IconButton(close,Modifier.align(Alignment.TopStart).statusBarsPadding().padding(4.dp)){Icon(Icons.Default.KeyboardArrowDown,null)}
+  IconButton({tick();close()},Modifier.align(Alignment.TopStart).statusBarsPadding().padding(4.dp)){Icon(Icons.Default.KeyboardArrowDown,null)}
  }}
 }
