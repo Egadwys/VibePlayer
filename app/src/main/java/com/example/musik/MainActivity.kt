@@ -116,9 +116,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 @Composable fun VisualizerWave(playing: Boolean) {
- // Visualizer hanya tampil dan berdenyut jika playing == true
  if (!playing) return
-
  val infiniteTransition = rememberInfiniteTransition(label = "wave")
  val scale by infiniteTransition.animateFloat(
   initialValue = 1f, targetValue = 1.15f,
@@ -176,8 +174,6 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 @Composable fun HomeTab(g:Map<String,List<Song>>,open:(String)->Unit){
- val keys=remember(g){g.keys.sorted()}
- val pick=remember(g){g.mapValues{it.value.random()}}
  if(g.isEmpty())Box(Modifier.fillMaxSize(),Alignment.Center){Text("Tidak ada lagu di folder ini")} else Groups(g,open)
 }
 
