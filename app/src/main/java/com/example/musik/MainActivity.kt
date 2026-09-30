@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.*
 import androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
@@ -56,10 +57,18 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.Player
 import androidx.media3.session.*
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity:ComponentActivity(){
- override fun onCreate(b:Bundle?){super.onCreate(b);enableEdgeToEdge();setContent{Root()}}
+ override fun onCreate(b:Bundle?){
+  super.onCreate(b)
+  val t=android.graphics.Color.TRANSPARENT
+  enableEdgeToEdge(statusBarStyle=SystemBarStyle.auto(t,t),navigationBarStyle=SystemBarStyle.auto(t,t))
+  if(Build.VERSION.SDK_INT>=29)window.isNavigationBarContrastEnforced=false
+  setContent{Root()}
+ }
 }
 
 @Composable fun MusikTheme(mode:Int,content:@Composable () -> Unit){
@@ -135,7 +144,8 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 @Composable fun <T> Grid(items:List<T>,key:(T)->Any,tile:@Composable (Int,T)->Unit){
- LazyVerticalGrid(GridCells.Fixed(3),Modifier.fillMaxSize(),contentPadding=PaddingValues(8.dp),
+ LazyVerticalGrid(GridCells.Fixed(3),Modifier.fillMaxSize(),
+  contentPadding=PaddingValues(start=8.dp,top=8.dp,end=8.dp,bottom=WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()+96.dp),
   horizontalArrangement=Arrangement.spacedBy(6.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
   itemsIndexed(items,key={_,t->key(t)}){i,t->tile(i,t)}
  }
@@ -226,8 +236,28 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  val pagerState = rememberPagerState(initialPage = tab) { 4 }
 
  LaunchedEffect(tab, detail) { appSp.edit().putInt("tab", tab).putString("detail", detail).apply() }
- LaunchedEffect(pagerState.settledPage) { tab = pagerState.settledPage }
- LaunchedEffect(tab) { if (pagerState.currentPage != tab) pagerState.animateScrollToPage(tab) }
+ val scope = rememberCoroutineScope()
+ var navTarget by remember{mutableStateOf<Int?>(null)}
+ var navJob by remember{mutableStateOf<Job?>(null)}
+ // swipe -> update tab (diabaikan selama perpindahan dari tap navbar sedang berjalan)
+ LaunchedEffect(pagerState) { snapshotFlow{pagerState.settledPage}.collect{ if(navTarget==null) tab = it } }
+ fun selectTab(i:Int){
+  val wasDetail = detail != null
+  if(!wasDetail && navTarget==i) return          // sudah menuju tab ini
+  tab = i; detail = null; navTarget = i
+  navJob?.cancel()                               // batalkan animasi sebelumnya, cegah tumpang tindih
+  navJob = scope.launch{
+   try{
+    if(wasDetail) pagerState.scrollToPage(i)
+    else{
+     val from = pagerState.currentPage
+     // lompat ke halaman sebelah dulu agar halaman perantara tidak ikut dirender
+     if(kotlin.math.abs(i-from) > 1) pagerState.scrollToPage(if(i>from) i-1 else i+1)
+     pagerState.animateScrollToPage(i, animationSpec = tween(280, easing = FastOutSlowInEasing))
+    }
+   } finally { if(navTarget==i) navTarget = null }
+  }
+ }
 
  var restored by remember{mutableStateOf(false)}
  fun savePos(){
@@ -300,6 +330,12 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  BackHandler(showNow||detail!=null){if(showNow)showNow=false else detail=null}
  fun play(l:List<Song>,i:Int){ctrl?.run{setMediaItems(l.map{it.item()},i,0L);prepare();play()}}
  val cur=remember(byId,nowId){nowId?.toLongOrNull()?.let{byId[it]}}
+ val tabTitles=listOf("Home","Album","Artis","Playlist")
+ var showSong by remember{mutableStateOf(false)}
+ LaunchedEffect(nowId,playing){
+  if(playing&&nowId!=null){showSong=true;delay(2000);showSong=false} else showSong=false
+ }
+ val title=if(showSong&&cur!=null)cur.title else (detail?.drop(2)?:tabTitles[tab])
  val byFolder=remember(songs){songs.filter{it.folder!=null}.groupBy{it.folder!!}}
  val byAlbum=remember(songs){songs.groupBy{it.album}}
  val byArtist=remember(songs){songs.groupBy{it.artist}}
@@ -307,7 +343,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  Box{
   Scaffold(topBar={
    TopAppBar(
-    title={Text(detail?.drop(2)?:"VibeMusic",maxLines=1)},
+    title={AnimatedContent(targetState=title,label="title"){t->Text(t,maxLines=1,overflow=TextOverflow.Ellipsis)}},
     navigationIcon={if(detail!=null)IconButton({detail=null}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null)}},
     actions={
      IconButton({ folderPickerLauncher.launch(null) }) {
@@ -317,10 +353,8 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
     }
    )
   },
-  bottomBar={Column{
-   if(cur!=null)Mini(cur,ctrl,playing,pos){showNow=true}
-   FloatingNav(tab){tab=it;detail=null}
-  }}){pad->
+  containerColor=Color.Transparent,
+  bottomBar={FloatingNav(tab,cur,playing,pos,ctrl,{showNow=true}){selectTab(it)}}){pad->
   
   if(detail!=null){
    val d = detail!!
@@ -329,13 +363,13 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    val list=remember(d,songs,ids){when(d[0]){
     'f'->songs.filter{it.folder==n};'a'->songs.filter{it.album==n};'r'->songs.filter{it.artist==n}
     else->ids.orEmpty().mapNotNull{byId[it]}}}
-   Box(Modifier.padding(pad).fillMaxSize().pointerInput(Unit){ 
+   Box(Modifier.padding(top=pad.calculateTopPadding()).fillMaxSize().pointerInput(Unit){ 
     detectHorizontalDragGestures { _, dragAmount -> if (dragAmount > 40) detail = null }
    }) {
     SongGrid(list,nowId,pl,if(d[0]=='p')n else null){play(list,it)}
    }
   } else {
-   HorizontalPager(state = pagerState, modifier = Modifier.padding(pad).fillMaxSize(), verticalAlignment = Alignment.Top) { page ->
+   HorizontalPager(state = pagerState, modifier = Modifier.padding(top=pad.calculateTopPadding()).fillMaxSize(), verticalAlignment = Alignment.Top) { page ->
     when(page){
      0->HomeTab(byFolder){detail="f:$it"}
      1->Groups(byAlbum){detail="a:$it"}
@@ -352,39 +386,36 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
-@Composable fun FloatingNav(tab:Int,onSelect:(Int)->Unit){
+@OptIn(ExperimentalFoundationApi::class)
+@Composable fun FloatingNav(tab:Int,cur:Song?,playing:Boolean,pos:State<Long>,ctrl:MediaController?,openNow:()->Unit,onSelect:(Int)->Unit){
  val items=listOf("Home" to Icons.Default.Home,"Album" to Icons.Default.Album,"Artis" to Icons.Default.Person,"Playlist" to Icons.AutoMirrored.Filled.QueueMusic)
  Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=24.dp,vertical=12.dp),contentAlignment=Alignment.Center){
   Surface(shape=RoundedCornerShape(50),color=MaterialTheme.colorScheme.surfaceContainerHigh,tonalElevation=0.dp,shadowElevation=10.dp){
-   Row(Modifier.padding(8.dp),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically){
+   Row(Modifier.animateContentSize().padding(8.dp),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically){
     items.forEachIndexed{i,(t,ic)->
      val sel=tab==i
-     Box(Modifier.width(68.dp).height(48.dp).clip(CircleShape)
+     Box(Modifier.width(56.dp).height(48.dp).clip(CircleShape)
       .background(if(sel)MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
       .clickable{onSelect(i)},contentAlignment=Alignment.Center){
       Icon(ic,t,tint=if(sel)MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
      }
     }
+    if(cur!=null){
+     Spacer(Modifier.width(4.dp))
+     // tombol play/pause dengan cover art sebagai background (tap: play/pause, tahan: buka pemutar)
+     Box(Modifier.size(48.dp).clip(CircleShape).combinedClickable(
+      onClick={if(playing)ctrl?.pause() else ctrl?.play()},
+      onLongClick=openNow),contentAlignment=Alignment.Center){
+      Cover(cur,Modifier.fillMaxSize().padding(4.dp),shape=CircleShape,px=200)
+      Box(Modifier.fillMaxSize().padding(4.dp).clip(CircleShape).background(Color.Black.copy(alpha=0.35f)))
+      Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null,tint=Color.White)
+      CircularProgressIndicator(progress={(pos.value.toFloat()/maxOf(cur.dur,1L)).coerceIn(0f,1f)},
+       modifier=Modifier.fillMaxSize(),strokeWidth=2.dp,color=MaterialTheme.colorScheme.primary,trackColor=Color.Transparent)
+     }
+    }
    }
   }
  }
-}
-
-@Composable fun Mini(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,open:()->Unit){
- Surface(color=MaterialTheme.colorScheme.background,tonalElevation=0.dp,modifier=Modifier.clickable{open()}.pointerInput(Unit){
-  detectVerticalDragGestures { _, dragAmount -> if (dragAmount < -30) open() }
- }){Column{
-  LinearProgressIndicator(progress = { (pos.value.toFloat()/maxOf(s.dur,1L)).coerceIn(0f,1f) }, modifier = Modifier.fillMaxWidth())
-  Row(Modifier.padding(horizontal=12.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
-   Cover(s,Modifier.size(44.dp))
-   Column(Modifier.weight(1f).padding(horizontal=12.dp)){
-    Text(s.title,maxLines=1,fontWeight=FontWeight.Bold,overflow=TextOverflow.Ellipsis, textAlign = TextAlign.Start)
-    Text(s.artist,maxLines=1,style=MaterialTheme.typography.bodySmall, textAlign = TextAlign.Start)
-   }
-   IconButton({ctrl?.seekToPrevious()}){Icon(Icons.Default.SkipPrevious,null)}
-   IconButton({if(playing)ctrl?.pause() else ctrl?.play()}){Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null)}
-   IconButton({ctrl?.seekToNext()}){Icon(Icons.Default.SkipNext,null)}
-  }}}
 }
 
 @Composable fun Seek(pos:State<Long>,dur:Long,ctrl:MediaController?){
