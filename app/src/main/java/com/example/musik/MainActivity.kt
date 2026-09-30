@@ -37,9 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.session.*
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
+import kotlin.math.max
 import kotlinx.coroutines.delay
 
 class MainActivity:ComponentActivity(){
@@ -93,16 +91,19 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
-/** Visualizer sederhana (animasi, bukan analisis audio asli). Warna mengikuti tema: putih di gelap, hitam di terang. */
+/** Visualizer asli: spektrum audio yang sedang diputar. Warna mengikuti tema (putih di gelap, hitam di terang). */
 @Composable fun Bars(active:Boolean,m:Modifier){
- var t by remember{mutableFloatStateOf(0f)}
- LaunchedEffect(active){if(active){while(true){withFrameNanos{t=it/1e9f}}}}
+ var tick by remember{mutableLongStateOf(0L)}
+ val d=remember{FloatArray(Spectrum.B)}
+ LaunchedEffect(Unit){while(true){withFrameNanos{tick=it}}}
  val col=MaterialTheme.colorScheme.onSurface
  Canvas(m){
-  val n=28;val gap=size.width/n;val w=gap*0.55f
+  val tk=tick
+  val lv=Spectrum.levels
+  val n=Spectrum.B;val gap=size.width/n;val w=gap*0.55f
   for(i in 0 until n){
-   val a=abs(sin(t*(2.1f+(i%5)*0.7f)+i*1.3f));val b=abs(cos(t*(1.3f+(i%3)*0.9f)+i*0.7f))
-   val h=size.height*(if(active)0.12f+0.88f*(0.55f*a+0.45f*b) else 0.1f)
+   d[i]=if(active)max(lv[i],d[i]*0.85f) else d[i]*0.85f
+   val h=size.height*(0.08f+0.92f*d[i])
    drawRoundRect(col,Offset(i*gap+(gap-w)/2,(size.height-h)/2),Size(w,h),CornerRadius(w/2))
   }
  }
