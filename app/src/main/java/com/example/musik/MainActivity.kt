@@ -94,7 +94,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 
  Box{
  Scaffold(topBar={TopAppBar(title={Text(detail?.drop(2)?:"Musik",maxLines=1)},
-   navigationIcon={if(detail!=null)IconButton({detail=null}){Icon(Icons.Default.ArrowBack,null)}},
+   navigationIcon={if(detail!=null)IconButton({detail=null}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null)}},
    actions={IconButton(onTheme){Icon(when(mode){0->Icons.Default.SettingsBrightness;1->Icons.Default.LightMode;else->Icons.Default.DarkMode},null)}})},
   bottomBar={if(cur!=null)Mini(cur,ctrl,playing,pos){showNow=true}}){pad->
   Column(Modifier.padding(pad)){
@@ -143,7 +143,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   ListItem(headlineContent={Text("Playlist baru")},leadingContent={Icon(Icons.Default.Add,null)},modifier=Modifier.clickable{dlg=true})
   LazyColumn{items(pl.map.keys.sorted()){n->
    ListItem(headlineContent={Text(n)},supportingContent={Text("${pl.map[n]?.size?:0} lagu")},
-    leadingContent={Icon(Icons.Default.QueueMusic,null)},
+    leadingContent={Icon(Icons.AutoMirrored.Filled.QueueMusic,null)},
     trailingContent={IconButton({pl.delete(n)}){Icon(Icons.Default.Delete,null)}},modifier=Modifier.clickable{open(n)})}}
  }
  if(dlg)AlertDialog({dlg=false},confirmButton={TextButton({pl.create(name.trim());name="";dlg=false}){Text("Buat")}},
