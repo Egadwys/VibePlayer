@@ -37,6 +37,7 @@ import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -105,12 +106,12 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
-@Composable fun Cover(s:Song?,m:Modifier=Modifier,shape:Shape=RoundedCornerShape(14.dp),px:Int=320){
+@Composable fun Cover(s:Song?,m:Modifier=Modifier,shape:Shape=RoundedCornerShape(14.dp),px:Int=320,zoom:Float=1f){
  val c=LocalContext.current
  val bmp by produceState<Bitmap?>(s?.let{Covers.peek(it)},s?.id){value=if(s==null)null else Covers.get(c,s,px)}
  Box(m.clip(shape).aspectRatio(1f)){
   val b=bmp
-  if(b!=null){val ib=remember(b){b.asImageBitmap()};Image(ib,null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)}
+  if(b!=null){val ib=remember(b){b.asImageBitmap()};Image(ib,null,Modifier.fillMaxSize().graphicsLayer(scaleX=zoom,scaleY=zoom),contentScale=ContentScale.Crop)}
   else Vinyl(Modifier.fillMaxSize())
  }
 }
@@ -127,7 +128,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "a"
  )
  val color = MaterialTheme.colorScheme.primary
- Canvas(Modifier.size(220.dp)) {
+ Canvas(Modifier.size(280.dp)) {
   drawCircle(color = color.copy(alpha = alpha), radius = (size.minDimension / 2) * scale)
   drawCircle(color = color.copy(alpha = alpha * 0.4f), radius = (size.minDimension / 2) * (scale * 1.1f))
  }
@@ -318,10 +319,8 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   },
   bottomBar={Column{
    if(cur!=null)Mini(cur,ctrl,playing,pos){showNow=true}
-   NavigationBar{
-    listOf("Home" to Icons.Default.Home,"Album" to Icons.Default.Album,"Artis" to Icons.Default.Person,"Playlist" to Icons.AutoMirrored.Filled.QueueMusic)
-     .forEachIndexed{i,(t,ic)->NavigationBarItem(tab==i,{tab=i;detail=null},{Icon(ic,null)},label={Text(t)})}
-   }}}){pad->
+   FloatingNav(tab){tab=it;detail=null}
+  }}){pad->
   
   if(detail!=null){
    val d = detail!!
@@ -353,8 +352,26 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
+@Composable fun FloatingNav(tab:Int,onSelect:(Int)->Unit){
+ val items=listOf("Home" to Icons.Default.Home,"Album" to Icons.Default.Album,"Artis" to Icons.Default.Person,"Playlist" to Icons.AutoMirrored.Filled.QueueMusic)
+ Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=24.dp,vertical=12.dp),contentAlignment=Alignment.Center){
+  Surface(shape=RoundedCornerShape(50),color=MaterialTheme.colorScheme.surfaceContainerHigh,tonalElevation=0.dp,shadowElevation=10.dp){
+   Row(Modifier.padding(8.dp),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically){
+    items.forEachIndexed{i,(t,ic)->
+     val sel=tab==i
+     Box(Modifier.width(68.dp).height(48.dp).clip(CircleShape)
+      .background(if(sel)MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+      .clickable{onSelect(i)},contentAlignment=Alignment.Center){
+      Icon(ic,t,tint=if(sel)MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+     }
+    }
+   }
+  }
+ }
+}
+
 @Composable fun Mini(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,open:()->Unit){
- Surface(tonalElevation=3.dp,modifier=Modifier.clickable{open()}.pointerInput(Unit){
+ Surface(color=MaterialTheme.colorScheme.background,tonalElevation=0.dp,modifier=Modifier.clickable{open()}.pointerInput(Unit){
   detectVerticalDragGestures { _, dragAmount -> if (dragAmount < -30) open() }
  }){Column{
   LinearProgressIndicator(progress = { (pos.value.toFloat()/maxOf(s.dur,1L)).coerceIn(0f,1f) }, modifier = Modifier.fillMaxWidth())
@@ -390,7 +407,7 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    
    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
     VisualizerWave(playing) 
-    Cover(s, Modifier.size(220.dp), shape = CircleShape, px = 500)
+    Cover(s, Modifier.size(280.dp), shape = CircleShape, px = 700, zoom = 1.12f)
    }
 
    Box(Modifier.fillMaxWidth().height(100.dp), Alignment.CenterStart){
