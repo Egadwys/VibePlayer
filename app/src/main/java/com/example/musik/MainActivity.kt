@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,7 +31,7 @@ class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){super.onCreate(b);enableEdgeToEdge();setContent{Root()}}
 }
 
-@Composable fun MusikTheme(mode:Int,content:@Composable()->Unit){
+@Composable fun MusikTheme(mode:Int,content:@Composable () -> Unit){
  val dark=mode==2||(mode==0&&isSystemInDarkTheme())
  val cs=if(dark)darkColorScheme(primary=Color(0xFF80CBC4),background=Color.Black,surface=Color.Black,
   surfaceVariant=Color(0xFF161616),surfaceContainer=Color(0xFF0C0C0C))
@@ -44,7 +45,7 @@ class MainActivity:ComponentActivity(){
  MusikTheme(mode){Surface(Modifier.fillMaxSize()){Perm{App(mode){mode=(mode+1)%3;sp.edit().putInt("mode",mode).apply()}}}}
 }
 
-@Composable fun Perm(content:@Composable()->Unit){
+@Composable fun Perm(content:@Composable () -> Unit){
  val c=LocalContext.current
  val need=if(Build.VERSION.SDK_INT>=33)arrayOf(READ_MEDIA_AUDIO,POST_NOTIFICATIONS) else arrayOf(READ_EXTERNAL_STORAGE)
  fun ok()=ContextCompat.checkSelfPermission(c,need[0])==PackageManager.PERMISSION_GRANTED
