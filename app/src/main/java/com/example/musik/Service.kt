@@ -34,7 +34,7 @@ class PlayerWidget:AppWidgetProvider(){
  companion object{
   fun push(c:Context,t:String?,a:String?,playing:Boolean){
    val v=RemoteViews(c.packageName,R.layout.widget_player)
-   v.setTextViewText(R.id.wt,t?:"Musik");v.setTextViewText(R.id.wa,a?:"Belum memutar")
+   v.setTextViewText(R.id.wt,t?:"VibeMusic");v.setTextViewText(R.id.wa,a?:"Belum memutar")
    v.setImageViewResource(R.id.wpp,if(playing)android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
    fun pi(act:String)=PendingIntent.getService(c,act.hashCode(),Intent(c,PlaybackService::class.java).setAction(act),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
    v.setOnClickPendingIntent(R.id.wp,pi("prev"));v.setOnClickPendingIntent(R.id.wpp,pi("pp"));v.setOnClickPendingIntent(R.id.wn,pi("next"))
