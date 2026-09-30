@@ -6,6 +6,8 @@ import android.util.Size
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.media3.common.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.*
 import java.net.*
 
@@ -62,15 +64,20 @@ object Meta{
 
 /** Cover hanya dari file (embedded/folder art). Tidak ada -> null -> UI menampilkan piringan hitam. */
 object Covers{
- private val lru=android.util.LruCache<Long,Bitmap>(40)
+ private class Lru(max:Int):android.util.LruCache<Long,Bitmap>(max){override fun sizeOf(key:Long,value:Bitmap):Int=value.byteCount}
+ private val small=Lru(24*1024*1024)
+ private val big=Lru(16*1024*1024)
  private val none=java.util.Collections.synchronizedSet(HashSet<Long>())
- suspend fun get(c:Context,s:Song):Bitmap?{
-  lru.get(s.id)?.let{return it}
+ private val sem=Semaphore(3)
+ fun peek(s:Song):Bitmap?=small.get(s.id)
+ suspend fun get(c:Context,s:Song,px:Int):Bitmap?{
+  val cache=if(px>512)big else small
+  cache.get(s.id)?.let{return it}
   if(s.id in none)return null
-  return withContext(Dispatchers.IO){
-   try{c.contentResolver.loadThumbnail(s.uri,Size(400,400),null).also{lru.put(s.id,it)}}
+  return sem.withPermit{withContext(Dispatchers.IO){
+   try{c.contentResolver.loadThumbnail(s.uri,Size(px,px),null).also{cache.put(s.id,it)}}
    catch(e:Exception){none.add(s.id);null}
-  }
+  }}
  }
 }
 
