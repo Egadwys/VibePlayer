@@ -13,14 +13,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.*
-import androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
@@ -38,11 +39,14 @@ import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +64,9 @@ import androidx.media3.session.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 class MainActivity:ComponentActivity(){
  override fun onCreate(b:Bundle?){
@@ -73,9 +80,14 @@ class MainActivity:ComponentActivity(){
 
 @Composable fun MusikTheme(mode:Int,content:@Composable () -> Unit){
  val dark=mode==2||(mode==0&&isSystemInDarkTheme())
- val cs=if(dark)darkColorScheme(primary=Color(0xFF80CBC4),background=Color.Black,surface=Color.Black,
-  surfaceVariant=Color(0xFF161616),surfaceContainer=Color(0xFF0C0C0C))
- else lightColorScheme(primary=Color(0xFF00796B))
+ val ctx=LocalContext.current
+ val darkOv:(ColorScheme)->ColorScheme={it.copy(background=Color.Black,surface=Color.Black,surfaceVariant=Color(0xFF161616),surfaceContainer=Color(0xFF0C0C0C))}
+ // Material You (dynamic color) di Android 12+, fallback skema teal yang konsisten di bawahnya
+ val cs=when{
+  Build.VERSION.SDK_INT>=31->if(dark)darkOv(dynamicDarkColorScheme(ctx)) else dynamicLightColorScheme(ctx)
+  dark->darkOv(darkColorScheme(primary=Color(0xFF80CBC4),secondaryContainer=Color(0xFF334B48),onSecondaryContainer=Color(0xFFCCE8E4),tertiary=Color(0xFF9DCAE7)))
+  else->lightColorScheme(primary=Color(0xFF00796B),secondaryContainer=Color(0xFFCCE8E4),onSecondaryContainer=Color(0xFF00201D),tertiary=Color(0xFF456179))
+ }
  val view=LocalView.current
  SideEffect{
   (view.context as? Activity)?.window?.let{w->
@@ -126,20 +138,40 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 @Composable fun VisualizerWave(playing: Boolean) {
- if (!playing) return
- val infiniteTransition = rememberInfiniteTransition(label = "wave")
- val scale by infiniteTransition.animateFloat(
-  initialValue = 1f, targetValue = 1.15f,
-  animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "s"
- )
- val alpha by infiniteTransition.animateFloat(
-  initialValue = 0.5f, targetValue = 0f,
-  animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "a"
- )
- val color = MaterialTheme.colorScheme.primary
- Canvas(Modifier.size(280.dp)) {
-  drawCircle(color = color.copy(alpha = alpha), radius = (size.minDimension / 2) * scale)
-  drawCircle(color = color.copy(alpha = alpha * 0.4f), radius = (size.minDimension / 2) * (scale * 1.1f))
+ val tr = rememberInfiniteTransition(label = "wave")
+ val time by tr.animateFloat(0f, (2 * PI).toFloat(),
+  infiniteRepeatable(tween(16000, easing = LinearEasing)), label = "t")
+ val energy by animateFloatAsState(if (playing) 1f else 0.2f, tween(900), label = "e")
+ val c1 = MaterialTheme.colorScheme.primary
+ val c2 = MaterialTheme.colorScheme.tertiary
+ val steps = 140
+ val cosT = remember { FloatArray(steps + 1) { cos(it * 2f * PI.toFloat() / steps) } }
+ val sinT = remember { FloatArray(steps + 1) { sin(it * 2f * PI.toFloat() / steps) } }
+ val path = remember { Path() }
+ Canvas(Modifier.fillMaxWidth().aspectRatio(1f)) {
+  val cx = size.width / 2; val cy = size.height / 2
+  val inner = 136.dp.toPx()
+  val spread = (size.width / 2 + 22.dp.toPx() - inner).coerceAtLeast(28.dp.toPx())
+  val rings = 34
+  val tm = time; val e = energy
+  val pulse = 0.9f + 0.1f * sin(tm * 6f)
+  val stroke = Stroke(0.9.dp.toPx())
+  for (k in rings - 1 downTo 0) {
+   val t = (k + 1f) / rings
+   path.reset()
+   for (i in 0..steps) {
+    val a = i * 2f * PI.toFloat() / steps
+    val th = a + t * 1.4f // puntiran antar ring -> efek pusaran
+    val w = sin(3 * th + 2 * tm) * 0.45f + sin(5 * th - 3 * tm) * 0.25f +
+      sin(2 * th + tm) * 0.35f + sin(7 * th + 4 * tm) * 0.12f
+    val sh = 0.5f + 0.5f * (w / 1.17f)
+    val r = inner + spread * t * (0.22f + 0.78f * e * sh) * pulse
+    val x = cx + r * cosT[i]; val y = cy + r * sinT[i]
+    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+   }
+   path.close()
+   drawPath(path, lerp(c1, c2, t).copy(alpha = 0.95f - 0.75f * t), style = stroke)
+  }
  }
 }
 
@@ -206,21 +238,8 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  val c=LocalContext.current
  val appSp = c.getSharedPreferences("AppState", Context.MODE_PRIVATE) 
  
- val savedUriString = appSp.getString("selected_folder_uri", null)
- var songs by remember {
-  mutableStateOf(
-   if (savedUriString != null) loadSongsFromFolder(c, Uri.parse(savedUriString))
-   else loadSongs(c)
-  )
- }
-
- val folderPickerLauncher = rememberLauncherForActivityResult(OpenDocumentTree()) { uri ->
-  if (uri != null) {
-   c.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-   appSp.edit().putString("selected_folder_uri", uri.toString()).apply()
-   songs = loadSongsFromFolder(c, uri)
-  }
- }
+ LaunchedEffect(Unit){ appSp.edit().remove("selected_folder_uri").apply() }
+ var songs by remember{mutableStateOf(loadSongs(c))}
 
  val pl=remember{Playlists(c)}
  var ctrl by remember{mutableStateOf<MediaController?>(null)}
@@ -229,7 +248,10 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  var shuffle by remember{mutableStateOf(false)}
  var repeat by remember{mutableIntStateOf(Player.REPEAT_MODE_OFF)}
  val pos=remember{mutableStateOf(0L)}
- var showNow by remember{mutableStateOf(false)}
+ val sheet = remember{Animatable(0f)}            // 0 = tersembunyi, 1 = terbuka penuh
+ var hPx by remember{mutableFloatStateOf(1f)}
+ val expanded by remember{derivedStateOf{sheet.value>0.5f}}
+ val sheetVisible by remember{derivedStateOf{sheet.value>0f}}
  
  var tab by remember{mutableIntStateOf(appSp.getInt("tab", 0))}
  var detail by remember{mutableStateOf<String?>(appSp.getString("detail", null))}
@@ -327,9 +349,16 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   restored = true
  }
 
- BackHandler(showNow||detail!=null){if(showNow)showNow=false else detail=null}
+ BackHandler(expanded||detail!=null){if(expanded)scope.launch{sheet.animateTo(0f)} else detail=null}
  fun play(l:List<Song>,i:Int){ctrl?.run{setMediaItems(l.map{it.item()},i,0L);prepare();play()}}
  val cur=remember(byId,nowId){nowId?.toLongOrNull()?.let{byId[it]}}
+ val dragState = rememberDraggableState{ dy -> scope.launch{ sheet.snapTo((sheet.value - dy/hPx).coerceIn(0f,1f)) } }
+ fun settle(v:Float){
+  val target = when{ v < -700f -> 1f; v > 700f -> 0f; sheet.value>0.5f -> 1f; else -> 0f }
+  scope.launch{ sheet.animateTo(target, spring(dampingRatio=0.85f, stiffness=Spring.StiffnessMediumLow), initialVelocity = -v/hPx) }
+ }
+ // geser naik: buka pemutar, geser turun: tutup (mengikuti jari)
+ val dragMod = Modifier.draggable(dragState, Orientation.Vertical, enabled = cur!=null, onDragStopped = { settle(it) })
  val tabTitles=listOf("Home","Album","Artis","Playlist")
  var showSong by remember{mutableStateOf(false)}
  LaunchedEffect(nowId,playing){
@@ -340,21 +369,18 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  val byAlbum=remember(songs){songs.groupBy{it.album}}
  val byArtist=remember(songs){songs.groupBy{it.artist}}
 
- Box{
+ Box(Modifier.fillMaxSize().onSizeChanged{ hPx = it.height.toFloat() }){
   Scaffold(topBar={
    TopAppBar(
     title={AnimatedContent(targetState=title,label="title"){t->Text(t,maxLines=1,overflow=TextOverflow.Ellipsis)}},
     navigationIcon={if(detail!=null)IconButton({detail=null}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null)}},
     actions={
-     IconButton({ folderPickerLauncher.launch(null) }) {
-      Icon(Icons.Default.FolderOpen, contentDescription = "Pilih Folder")
-     }
      IconButton(onTheme){Icon(when(mode){0->Icons.Default.SettingsBrightness;1->Icons.Default.LightMode;else->Icons.Default.DarkMode},null)}
     }
    )
   },
   containerColor=Color.Transparent,
-  bottomBar={FloatingNav(tab,cur,playing,pos,ctrl,{showNow=true}){selectTab(it)}}){pad->
+  bottomBar={FloatingNav(tab,cur,playing,pos,ctrl,dragMod){selectTab(it)}}){pad->
   
   if(detail!=null){
    val d = detail!!
@@ -380,16 +406,23 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   }
  }
  
- AnimatedVisibility(showNow,enter=slideInVertically(tween(300)){it},exit=slideOutVertically(tween(300)){it}){
-  cur?.let{Now(it,ctrl,playing,pos,shuffle,repeat){showNow=false}}
+ if(sheetVisible){
+  Box(Modifier.fillMaxSize().graphicsLayer{
+   val p = sheet.value
+   translationY = (1f-p)*hPx
+   val r = (1f-p).coerceIn(0f,1f)*28.dp.toPx()
+   shape = RoundedCornerShape(r,r,0f,0f); clip = true
+  }){
+   cur?.let{ Now(it,ctrl,playing,pos,shuffle,repeat,dragMod){ scope.launch{ sheet.animateTo(0f) } } }
+  }
  }
  }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable fun FloatingNav(tab:Int,cur:Song?,playing:Boolean,pos:State<Long>,ctrl:MediaController?,openNow:()->Unit,onSelect:(Int)->Unit){
+@Composable fun FloatingNav(tab:Int,cur:Song?,playing:Boolean,pos:State<Long>,ctrl:MediaController?,dragMod:Modifier,onSelect:(Int)->Unit){
  val items=listOf("Home" to Icons.Default.Home,"Album" to Icons.Default.Album,"Artis" to Icons.Default.Person,"Playlist" to Icons.AutoMirrored.Filled.QueueMusic)
- Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=24.dp,vertical=12.dp),contentAlignment=Alignment.Center){
+ Box(dragMod.fillMaxWidth().navigationBarsPadding().padding(horizontal=24.dp,vertical=12.dp),contentAlignment=Alignment.Center){
   Surface(shape=RoundedCornerShape(50),color=MaterialTheme.colorScheme.surfaceContainerHigh,tonalElevation=0.dp,shadowElevation=10.dp){
    Row(Modifier.animateContentSize().padding(8.dp),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically){
     items.forEachIndexed{i,(t,ic)->
@@ -402,10 +435,8 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
     }
     if(cur!=null){
      Spacer(Modifier.width(4.dp))
-     // tombol play/pause dengan cover art sebagai background (tap: play/pause, tahan: buka pemutar)
-     Box(Modifier.size(48.dp).clip(CircleShape).combinedClickable(
-      onClick={if(playing)ctrl?.pause() else ctrl?.play()},
-      onLongClick=openNow),contentAlignment=Alignment.Center){
+     // tombol play/pause dengan cover art sebagai background (tap: play/pause, geser naik: buka pemutar)
+     Box(Modifier.size(48.dp).clip(CircleShape).clickable{if(playing)ctrl?.pause() else ctrl?.play()},contentAlignment=Alignment.Center){
       Cover(cur,Modifier.fillMaxSize().padding(4.dp),shape=CircleShape,px=200)
       Box(Modifier.fillMaxSize().padding(4.dp).clip(CircleShape).background(Color.Black.copy(alpha=0.35f)))
       Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null,tint=Color.White)
@@ -425,15 +456,13 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  Row(Modifier.fillMaxWidth(),Arrangement.SpaceBetween){Text(fmt(p));Text(fmt(dur))}
 }
 
-@Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,shuffle:Boolean,repeat:Int,close:()->Unit){
+@Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,shuffle:Boolean,repeat:Int,dragMod:Modifier,close:()->Unit){
  var lines by remember(s.id){mutableStateOf<List<Line>?>(null)}
  LaunchedEffect(s.id){lines=Lyrics.get(s)}
  val idx by remember(s.id){derivedStateOf{lines?.indexOfLast{it.ms<=pos.value}?:-1}}
  val on=MaterialTheme.colorScheme.primary;val off=MaterialTheme.colorScheme.onSurface.copy(alpha=0.5f)
  
- Surface(Modifier.fillMaxSize().pointerInput(Unit){
-  detectVerticalDragGestures { _, dragAmount -> if (dragAmount > 40) close() }
- }){Box(Modifier.fillMaxSize()){
+ Surface(Modifier.fillMaxSize().then(dragMod)){Box(Modifier.fillMaxSize()){
   Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal=24.dp)){
    
    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
