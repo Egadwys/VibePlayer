@@ -23,7 +23,7 @@ class PlaybackService:MediaSessionService(){
  override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
   session?.player?.let{when(intent?.action){
    "pp"->if(it.isPlaying)it.pause() else it.play()
-   "next"->it.seekToNext(); "prev"->it.seekToPrevious()}}
+   "next"->it.seekToNext(); "prev"->it.seekToPrevious(); else->Unit}}
   return super.onStartCommand(intent,flags,startId)
  }
  override fun onDestroy(){session?.run{player.release();release()};session=null;super.onDestroy()}
