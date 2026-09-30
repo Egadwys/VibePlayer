@@ -19,6 +19,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -27,11 +28,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -47,7 +46,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.media3.common.Player
 import androidx.media3.session.*
-import kotlin.math.max
 import kotlinx.coroutines.delay
 
 class MainActivity:ComponentActivity(){
@@ -99,39 +97,13 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
-@Composable fun Cover(s:Song?,m:Modifier=Modifier){
+@Composable fun Cover(s:Song?,m:Modifier=Modifier,shape:Shape=RoundedCornerShape(14.dp),px:Int=320){
  val c=LocalContext.current
- val bmp by produceState<Bitmap?>(s?.let{Covers.peek(it)},s?.id){value=if(s==null)null else Covers.get(c,s,320)}
- Box(m.clip(RoundedCornerShape(14.dp)).aspectRatio(1f)){
+ val bmp by produceState<Bitmap?>(s?.let{Covers.peek(it)},s?.id){value=if(s==null)null else Covers.get(c,s,px)}
+ Box(m.clip(shape).aspectRatio(1f)){
   val b=bmp
   if(b!=null){val ib=remember(b){b.asImageBitmap()};Image(ib,null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)}
   else Vinyl(Modifier.fillMaxSize())
- }
-}
-
-@Composable fun FullCover(s:Song,m:Modifier){
- val c=LocalContext.current
- val bmp by produceState<Bitmap?>(Covers.peek(s),s.id){value=Covers.get(c,s,1024)}
- val b=bmp
- if(b!=null){val ib=remember(b){b.asImageBitmap()};Image(ib,null,m,contentScale=ContentScale.Crop,alignment=Alignment.TopCenter)}
- else Box(m,Alignment.TopCenter){Vinyl(Modifier.fillMaxWidth().aspectRatio(1f))}
-}
-
-/** Visualizer asli: spektrum audio yang sedang diputar. Warna mengikuti tema. */
-@Composable fun Bars(active:Boolean,m:Modifier){
- var tick by remember{mutableLongStateOf(0L)}
- val d=remember{FloatArray(Spectrum.B)}
- LaunchedEffect(Unit){while(true){withFrameNanos{tick=it}}}
- val col=MaterialTheme.colorScheme.onSurface
- Canvas(m){
-  val tk=tick
-  val lv=Spectrum.levels
-  val n=Spectrum.B;val gap=size.width/n;val w=gap*0.55f
-  for(i in 0 until n){
-   d[i]=if(active)max(lv[i],d[i]*0.85f) else d[i]*0.85f
-   val h=size.height*(0.08f+0.92f*d[i])
-   drawRoundRect(col,Offset(i*gap+(gap-w)/2,(size.height-h)/2),Size(w,h),CornerRadius(w/2))
-  }
  }
 }
 
@@ -298,30 +270,23 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 @Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,shuffle:Boolean,repeat:Int,close:()->Unit){
  var lines by remember(s.id){mutableStateOf<List<Line>?>(null)}
  LaunchedEffect(s.id){lines=Lyrics.get(s)}
- val ls=rememberLazyListState()
  val idx by remember(s.id){derivedStateOf{lines?.indexOfLast{it.ms<=pos.value}?:-1}}
- LaunchedEffect(idx){if(idx>=0)ls.animateScrollToItem(maxOf(idx-3,0))}
- val bg=MaterialTheme.colorScheme.background
  val on=MaterialTheme.colorScheme.primary;val off=MaterialTheme.colorScheme.onSurface.copy(alpha=0.5f)
- val top=WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
  Surface(Modifier.fillMaxSize()){Box(Modifier.fillMaxSize()){
-  FullCover(s,Modifier.fillMaxSize())
-  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to bg.copy(alpha=0.35f),0.45f to bg.copy(alpha=0.65f),1f to bg.copy(alpha=0.98f))))
   Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal=24.dp)){
-   Box(Modifier.weight(1f).fillMaxWidth()){
+   Spacer(Modifier.weight(1f))
+   // Lirik satu baris, fade saat berganti baris
+   Box(Modifier.fillMaxWidth().height(108.dp),Alignment.BottomStart){
     val ll=lines
     when{
-     ll==null->Text("Memuat lirik…",Modifier.align(Alignment.Center))
-     ll.isEmpty()->Text("Lirik tersinkron tidak ditemukan",Modifier.align(Alignment.Center))
-     else->LazyColumn(state=ls,contentPadding=PaddingValues(top=top+56.dp,bottom=24.dp)){itemsIndexed(ll){i,l->
-      Text(l.text.ifBlank{"♪"},fontSize=20.sp,lineHeight=28.sp,textAlign=TextAlign.Center,
-       fontWeight=if(i==idx)FontWeight.Bold else FontWeight.Normal,
-       color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(i==idx)1f else 0.5f),
-       modifier=Modifier.fillMaxWidth().clickable{ctrl?.seekTo(l.ms)}.padding(vertical=6.dp))}}
+     ll==null->Text("Memuat lirik…",color=off)
+     ll.isEmpty()->Text("Lirik tidak ditemukan",color=off)
+     else->Crossfade(idx,animationSpec=tween(300),label="lyric"){i->
+      Text(ll.getOrNull(i)?.text?.ifBlank{"♪"}?:"",fontSize=24.sp,lineHeight=32.sp,fontWeight=FontWeight.Bold,maxLines=3,overflow=TextOverflow.Ellipsis)
+     }
     }
    }
-   Bars(playing,Modifier.fillMaxWidth().height(48.dp))
-   Spacer(Modifier.height(8.dp))
+   Spacer(Modifier.height(12.dp))
    Text(s.title,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth())
    Text(s.artist,color=on,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth())
    Seek(pos,s.dur,ctrl)
