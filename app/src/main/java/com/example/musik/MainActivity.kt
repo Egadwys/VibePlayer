@@ -1,5 +1,6 @@
 package com.example.musik
 import android.Manifest.permission.*
+import android.app.Activity
 import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -9,6 +10,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.*
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -25,16 +31,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.media3.common.Player
 import androidx.media3.session.*
 import kotlin.math.max
@@ -49,6 +59,13 @@ class MainActivity:ComponentActivity(){
  val cs=if(dark)darkColorScheme(primary=Color(0xFF80CBC4),background=Color.Black,surface=Color.Black,
   surfaceVariant=Color(0xFF161616),surfaceContainer=Color(0xFF0C0C0C))
  else lightColorScheme(primary=Color(0xFF00796B))
+ val view=LocalView.current
+ SideEffect{ // ikon status bar & navigation bar mengikuti tema aplikasi (hitam di mode terang)
+  (view.context as? Activity)?.window?.let{w->
+   val ic=WindowCompat.getInsetsController(w,view)
+   ic.isAppearanceLightStatusBars=!dark;ic.isAppearanceLightNavigationBars=!dark
+  }
+ }
  MaterialTheme(cs,content=content)
 }
 
@@ -84,14 +101,23 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 
 @Composable fun Cover(s:Song?,m:Modifier=Modifier){
  val c=LocalContext.current
- val bmp by produceState<Bitmap?>(null,s?.id){value=null;value=if(s==null)null else Covers.get(c,s)}
+ val bmp by produceState<Bitmap?>(s?.let{Covers.peek(it)},s?.id){value=if(s==null)null else Covers.get(c,s,320)}
  Box(m.clip(RoundedCornerShape(14.dp)).aspectRatio(1f)){
   val b=bmp
-  if(b!=null)Image(b.asImageBitmap(),null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop) else Vinyl(Modifier.fillMaxSize())
+  if(b!=null){val ib=remember(b){b.asImageBitmap()};Image(ib,null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)}
+  else Vinyl(Modifier.fillMaxSize())
  }
 }
 
-/** Visualizer asli: spektrum audio yang sedang diputar. Warna mengikuti tema (putih di gelap, hitam di terang). */
+@Composable fun FullCover(s:Song,m:Modifier){
+ val c=LocalContext.current
+ val bmp by produceState<Bitmap?>(Covers.peek(s),s.id){value=Covers.get(c,s,1024)}
+ val b=bmp
+ if(b!=null){val ib=remember(b){b.asImageBitmap()};Image(ib,null,m,contentScale=ContentScale.Crop,alignment=Alignment.TopCenter)}
+ else Box(m,Alignment.TopCenter){Vinyl(Modifier.fillMaxWidth().aspectRatio(1f))}
+}
+
+/** Visualizer asli: spektrum audio yang sedang diputar. Warna mengikuti tema. */
 @Composable fun Bars(active:Boolean,m:Modifier){
  var tick by remember{mutableLongStateOf(0L)}
  val d=remember{FloatArray(Spectrum.B)}
@@ -110,10 +136,10 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 // ---------- Grid 3 kolom ----------
-@Composable fun <T> Grid(items:List<T>,tile:@Composable (Int,T)->Unit){
+@Composable fun <T> Grid(items:List<T>,key:(T)->Any,tile:@Composable (Int,T)->Unit){
  LazyVerticalGrid(GridCells.Fixed(3),contentPadding=PaddingValues(8.dp),
   horizontalArrangement=Arrangement.spacedBy(6.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
-  itemsIndexed(items){i,t->tile(i,t)}
+  itemsIndexed(items,key={_,t->key(t)}){i,t->tile(i,t)}
  }
 }
 
@@ -136,32 +162,31 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
 }
 
 @Composable fun SongGrid(list:List<Song>,nowId:String?,pl:Playlists,from:String?,onPlay:(Int)->Unit){
- Grid(list){i,s->
-  val menu:List<Pair<String,()->Unit>> = pl.map.keys.sorted().map{n->"Tambah ke $n" to {pl.add(n,s.id)}}+
+ val names=pl.map.keys.sorted()
+ Grid(list,{it.id}){i,s->
+  val menu:List<Pair<String,()->Unit>> = names.map{n->"Tambah ke $n" to {pl.add(n,s.id)}}+
    (if(from!=null)listOf("Hapus dari playlist" to {pl.remove(from,s.id)}) else emptyList())
   Tile(s,s.title,s.artist,menu,s.id.toString()==nowId){onPlay(i)}
  }
 }
 
 @Composable fun Groups(g:Map<String,List<Song>>,open:(String)->Unit){
- Grid(g.keys.sorted()){_,k->
-  val l=g.getValue(k)
-  Tile(remember(k){l.random()},k,"${l.size} lagu"){open(k)}
- }
+ val keys=remember(g){g.keys.sorted()}
+ val pick=remember(g){g.mapValues{it.value.random()}} // cover acak, dipilih ulang tiap halaman dibuka
+ Grid(keys,{it}){_,k->Tile(pick[k],k,"${g.getValue(k).size} lagu"){open(k)}}
 }
 
-@Composable fun HomeTab(songs:List<Song>,open:(String)->Unit){
- val g=songs.filter{it.folder!=null}.groupBy{it.folder!!}
+@Composable fun HomeTab(g:Map<String,List<Song>>,open:(String)->Unit){
  if(g.isEmpty())Box(Modifier.fillMaxSize(),Alignment.Center){Text("Tidak ada lagu di folder Music")} else Groups(g,open)
 }
 
-@Composable fun PlaylistTab(pl:Playlists,songs:List<Song>,open:(String)->Unit){
+@Composable fun PlaylistTab(pl:Playlists,byId:Map<Long,Song>,open:(String)->Unit){
  var dlg by remember{mutableStateOf(false)};var name by remember{mutableStateOf("")}
  Column{
   FilledTonalButton({dlg=true},Modifier.padding(horizontal=12.dp)){Icon(Icons.Default.Add,null);Spacer(Modifier.width(8.dp));Text("Playlist baru")}
-  Grid(pl.map.keys.sorted()){_,n->
+  Grid(pl.map.keys.sorted(),{it}){_,n->
    val ids=pl.map[n].orEmpty()
-   Tile(ids.firstNotNullOfOrNull{id->songs.find{it.id==id}},n,"${ids.size} lagu",listOf("Hapus" to {pl.delete(n)})){open(n)}
+   Tile(ids.firstNotNullOfOrNull{byId[it]},n,"${ids.size} lagu",listOf("Hapus" to {pl.delete(n)})){open(n)}
   }
  }
  if(dlg)AlertDialog({dlg=false},confirmButton={TextButton({pl.create(name.trim());name="";dlg=false}){Text("Buat")}},
@@ -179,20 +204,23 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  var playing by remember{mutableStateOf(false)}
  var shuffle by remember{mutableStateOf(false)}
  var repeat by remember{mutableIntStateOf(Player.REPEAT_MODE_OFF)}
- var pos by remember{mutableLongStateOf(0L)}
+ val pos=remember{mutableStateOf(0L)} // hanya dibaca Mini/Now, agar App tidak recompose tiap 250ms
  var showNow by remember{mutableStateOf(false)}
  var tab by remember{mutableIntStateOf(0)}
  var detail by remember{mutableStateOf<String?>(null)}
 
- // Metadata dari file dulu; yang masih kosong disinkronkan dari internet (sekali per lagu, di-cache)
+ // Metadata dari file dulu; yang masih kosong disinkronkan dari internet (batch, di-cache)
  LaunchedEffect(Unit){
+  val upd=HashMap<Long,Song>();var n=0
   for(s in songs.toList()){
    if((s.artist==UA||s.album==UB)&&!Meta.tried(c,s.id)){
     val r=Meta.fetch(c,s)
-    if(r!=null)songs=songs.map{if(it.id==r.id)r else it}
+    if(r!=null&&r!=s){upd[s.id]=r;n++}
+    if(n>=15){val u=HashMap(upd);songs=songs.map{u[it.id]?:it};n=0}
     delay(1500)
    }
   }
+  if(upd.isNotEmpty())songs=songs.map{upd[it.id]?:it}
  }
  DisposableEffect(Unit){
   val f=MediaController.Builder(c,SessionToken(c,ComponentName(c,PlaybackService::class.java))).buildAsync()
@@ -206,14 +234,15 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
    nowId=q.currentMediaItem?.mediaId;playing=q.isPlaying;shuffle=q.shuffleModeEnabled;repeat=q.repeatMode}}
   p.addListener(l);onDispose{p.removeListener(l)}
  }
- LaunchedEffect(ctrl){while(true){pos=ctrl?.currentPosition?:0L;delay(250)}}
+ LaunchedEffect(ctrl){while(true){pos.value=ctrl?.currentPosition?:0L;delay(250)}}
  BackHandler(showNow||detail!=null){if(showNow)showNow=false else detail=null}
 
  fun play(l:List<Song>,i:Int){ctrl?.run{setMediaItems(l.map{it.item()},i,0L);prepare();play()}}
- val cur=songs.find{it.id.toString()==nowId}
- val dl=detail?.let{d->val n=d.drop(2);when(d[0]){
-  'f'->songs.filter{it.folder==n};'a'->songs.filter{it.album==n};'r'->songs.filter{it.artist==n}
-  else->pl.map[n].orEmpty().mapNotNull{id->songs.find{it.id==id}}}}
+ val byId=remember(songs){songs.associateBy{it.id}}
+ val cur=remember(byId,nowId){nowId?.toLongOrNull()?.let{byId[it]}}
+ val byFolder=remember(songs){songs.filter{it.folder!=null}.groupBy{it.folder!!}}
+ val byAlbum=remember(songs){songs.groupBy{it.album}}
+ val byArtist=remember(songs){songs.groupBy{it.artist}}
 
  Box{
  Scaffold(topBar={TopAppBar(title={Text(detail?.drop(2)?:"VibeMusic",maxLines=1)},
@@ -225,23 +254,31 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
     listOf("Home" to Icons.Default.Home,"Album" to Icons.Default.Album,"Artis" to Icons.Default.Person,"Playlist" to Icons.AutoMirrored.Filled.QueueMusic)
      .forEachIndexed{i,(t,ic)->NavigationBarItem(tab==i,{tab=i;detail=null},{Icon(ic,null)},label={Text(t)})}
    }}}){pad->
-  Column(Modifier.padding(pad)){
-   if(dl!=null)SongGrid(dl,nowId,pl,detail?.takeIf{it.startsWith("p:")}?.drop(2)){play(dl,it)}
-   else when(tab){
-    0->HomeTab(songs){detail="f:$it"}
-    1->Groups(songs.groupBy{it.album}){detail="a:$it"}
-    2->Groups(songs.groupBy{it.artist}){detail="r:$it"}
-    else->PlaylistTab(pl,songs){detail="p:$it"}
+  Crossfade(Pair(tab,detail),Modifier.padding(pad).fillMaxSize(),tween(180),label="page"){(t,d)->
+   if(d!=null){
+    val n=d.drop(2)
+    val ids=if(d[0]=='p')pl.map[n] else null
+    val list=remember(d,songs,ids){when(d[0]){
+     'f'->songs.filter{it.folder==n};'a'->songs.filter{it.album==n};'r'->songs.filter{it.artist==n}
+     else->ids.orEmpty().mapNotNull{byId[it]}}}
+    SongGrid(list,nowId,pl,if(d[0]=='p')n else null){play(list,it)}
+   }else when(t){
+    0->HomeTab(byFolder){detail="f:$it"}
+    1->Groups(byAlbum){detail="a:$it"}
+    2->Groups(byArtist){detail="r:$it"}
+    else->PlaylistTab(pl,byId){detail="p:$it"}
    }
   }
  }
- if(showNow&&cur!=null)Now(cur,ctrl,playing,pos,shuffle,repeat){showNow=false}
+ AnimatedVisibility(showNow,enter=fadeIn(tween(200)),exit=fadeOut(tween(150))){
+  cur?.let{Now(it,ctrl,playing,pos,shuffle,repeat){showNow=false}}
+ }
  }
 }
 
-@Composable fun Mini(s:Song,ctrl:MediaController?,playing:Boolean,pos:Long,open:()->Unit){
+@Composable fun Mini(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,open:()->Unit){
  Surface(tonalElevation=3.dp,modifier=Modifier.clickable{open()}){Column{
-  LinearProgressIndicator({(pos.toFloat()/maxOf(s.dur,1L)).coerceIn(0f,1f)},Modifier.fillMaxWidth())
+  LinearProgressIndicator({(pos.value.toFloat()/maxOf(s.dur,1L)).coerceIn(0f,1f)},Modifier.fillMaxWidth())
   Row(Modifier.padding(horizontal=12.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
    Cover(s,Modifier.size(44.dp))
    Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(s.title,maxLines=1,fontWeight=FontWeight.Bold,overflow=TextOverflow.Ellipsis);Text(s.artist,maxLines=1,style=MaterialTheme.typography.bodySmall)}
@@ -251,41 +288,52 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   }}}
 }
 
-@Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:Long,shuffle:Boolean,repeat:Int,close:()->Unit){
+@Composable fun Seek(pos:State<Long>,dur:Long,ctrl:MediaController?){
+ val d=maxOf(dur,1L).toFloat()
+ val p=pos.value
+ Slider(p.toFloat().coerceIn(0f,d),{ctrl?.seekTo(it.toLong())},valueRange=0f..d)
+ Row(Modifier.fillMaxWidth(),Arrangement.SpaceBetween){Text(fmt(p));Text(fmt(dur))}
+}
+
+@Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,shuffle:Boolean,repeat:Int,close:()->Unit){
  var lines by remember(s.id){mutableStateOf<List<Line>?>(null)}
  LaunchedEffect(s.id){lines=Lyrics.get(s)}
  val ls=rememberLazyListState()
- val idx=lines?.indexOfLast{it.ms<=pos}?:-1
- LaunchedEffect(idx){if(idx>=0)ls.animateScrollToItem(maxOf(idx-2,0))}
+ val idx by remember(s.id){derivedStateOf{lines?.indexOfLast{it.ms<=pos.value}?:-1}}
+ LaunchedEffect(idx){if(idx>=0)ls.animateScrollToItem(maxOf(idx-3,0))}
+ val bg=MaterialTheme.colorScheme.background
  val on=MaterialTheme.colorScheme.primary;val off=MaterialTheme.colorScheme.onSurface.copy(alpha=0.5f)
- Surface(Modifier.fillMaxSize()){Column(Modifier.systemBarsPadding().padding(horizontal=24.dp),horizontalAlignment=Alignment.CenterHorizontally){
-  Row(Modifier.fillMaxWidth()){IconButton(close){Icon(Icons.Default.KeyboardArrowDown,null)}}
-  Cover(s,Modifier.size(200.dp))
-  Spacer(Modifier.height(12.dp))
-  Text(s.title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,maxLines=1,textAlign=TextAlign.Center,modifier=Modifier.fillMaxWidth())
-  Text(s.artist,color=on,maxLines=1)
-  Box(Modifier.weight(1f).fillMaxWidth()){
-   val ll=lines
-   when{
-    ll==null->Text("Memuat lirik…",Modifier.align(Alignment.Center))
-    ll.isEmpty()->Text("Lirik tersinkron tidak ditemukan",Modifier.align(Alignment.Center))
-    else->LazyColumn(state=ls,contentPadding=PaddingValues(vertical=24.dp)){itemsIndexed(ll){i,l->
-     Text(l.text.ifBlank{"♪"},style=MaterialTheme.typography.titleMedium,textAlign=TextAlign.Center,
-      fontWeight=if(i==idx)FontWeight.Bold else FontWeight.Normal,
-      color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(i==idx)1f else 0.35f),
-      modifier=Modifier.fillMaxWidth().clickable{ctrl?.seekTo(l.ms)}.padding(vertical=6.dp))}}
+ val top=WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+ Surface(Modifier.fillMaxSize()){Box(Modifier.fillMaxSize()){
+  FullCover(s,Modifier.fillMaxSize())
+  Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to bg.copy(alpha=0.35f),0.45f to bg.copy(alpha=0.65f),1f to bg.copy(alpha=0.98f))))
+  Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal=24.dp)){
+   Box(Modifier.weight(1f).fillMaxWidth()){
+    val ll=lines
+    when{
+     ll==null->Text("Memuat lirik…",Modifier.align(Alignment.Center))
+     ll.isEmpty()->Text("Lirik tersinkron tidak ditemukan",Modifier.align(Alignment.Center))
+     else->LazyColumn(state=ls,contentPadding=PaddingValues(top=top+56.dp,bottom=24.dp)){itemsIndexed(ll){i,l->
+      Text(l.text.ifBlank{"♪"},fontSize=20.sp,lineHeight=28.sp,textAlign=TextAlign.Center,
+       fontWeight=if(i==idx)FontWeight.Bold else FontWeight.Normal,
+       color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(i==idx)1f else 0.5f),
+       modifier=Modifier.fillMaxWidth().clickable{ctrl?.seekTo(l.ms)}.padding(vertical=6.dp))}}
+    }
+   }
+   Bars(playing,Modifier.fillMaxWidth().height(48.dp))
+   Spacer(Modifier.height(8.dp))
+   Text(s.title,style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth())
+   Text(s.artist,color=on,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth())
+   Seek(pos,s.dur,ctrl)
+   Row(Modifier.fillMaxWidth().padding(bottom=16.dp),Arrangement.SpaceEvenly,Alignment.CenterVertically){
+    IconButton({ctrl?.let{it.shuffleModeEnabled=!it.shuffleModeEnabled}}){Icon(Icons.Default.Shuffle,null,tint=if(shuffle)on else off)}
+    IconButton({ctrl?.seekToPrevious()},Modifier.size(48.dp)){Icon(Icons.Default.SkipPrevious,null,Modifier.size(32.dp))}
+    FilledIconButton({if(playing)ctrl?.pause() else ctrl?.play()},Modifier.size(72.dp)){Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null,Modifier.size(40.dp))}
+    IconButton({ctrl?.seekToNext()},Modifier.size(48.dp)){Icon(Icons.Default.SkipNext,null,Modifier.size(32.dp))}
+    IconButton({ctrl?.let{it.repeatMode=when(it.repeatMode){Player.REPEAT_MODE_OFF->Player.REPEAT_MODE_ALL;Player.REPEAT_MODE_ALL->Player.REPEAT_MODE_ONE;else->Player.REPEAT_MODE_OFF}}}){
+     Icon(if(repeat==Player.REPEAT_MODE_ONE)Icons.Default.RepeatOne else Icons.Default.Repeat,null,tint=if(repeat==Player.REPEAT_MODE_OFF)off else on)}
    }
   }
-  Bars(playing,Modifier.fillMaxWidth().height(48.dp))
-  Slider(pos.toFloat().coerceIn(0f,maxOf(s.dur,1L).toFloat()),{ctrl?.seekTo(it.toLong())},valueRange=0f..maxOf(s.dur,1L).toFloat())
-  Row(Modifier.fillMaxWidth(),Arrangement.SpaceBetween){Text(fmt(pos));Text(fmt(s.dur))}
-  Row(Modifier.fillMaxWidth().padding(bottom=16.dp),Arrangement.SpaceEvenly,Alignment.CenterVertically){
-   IconButton({ctrl?.let{it.shuffleModeEnabled=!it.shuffleModeEnabled}}){Icon(Icons.Default.Shuffle,null,tint=if(shuffle)on else off)}
-   IconButton({ctrl?.seekToPrevious()},Modifier.size(48.dp)){Icon(Icons.Default.SkipPrevious,null,Modifier.size(32.dp))}
-   FilledIconButton({if(playing)ctrl?.pause() else ctrl?.play()},Modifier.size(72.dp)){Icon(if(playing)Icons.Default.Pause else Icons.Default.PlayArrow,null,Modifier.size(40.dp))}
-   IconButton({ctrl?.seekToNext()},Modifier.size(48.dp)){Icon(Icons.Default.SkipNext,null,Modifier.size(32.dp))}
-   IconButton({ctrl?.let{it.repeatMode=when(it.repeatMode){Player.REPEAT_MODE_OFF->Player.REPEAT_MODE_ALL;Player.REPEAT_MODE_ALL->Player.REPEAT_MODE_ONE;else->Player.REPEAT_MODE_OFF}}}){
-    Icon(if(repeat==Player.REPEAT_MODE_ONE)Icons.Default.RepeatOne else Icons.Default.Repeat,null,tint=if(repeat==Player.REPEAT_MODE_OFF)off else on)}
-  }
+  IconButton(close,Modifier.align(Alignment.TopStart).statusBarsPadding().padding(4.dp)){Icon(Icons.Default.KeyboardArrowDown,null)}
  }}
 }
