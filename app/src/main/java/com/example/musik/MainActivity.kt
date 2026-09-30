@@ -38,6 +38,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.lerp
@@ -137,40 +139,82 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  }
 }
 
-@Composable fun VisualizerWave(playing: Boolean) {
+// Harmonik yang dipakai visualizer: (frekuensi sudut, kecepatan putar integer -> loop mulus)
+private val WK = intArrayOf(2, 3, 5, 8, 13)
+private val WN = intArrayOf(1, 2, -3, 4, -6)
+
+@Composable fun VisualizerWave(playing: Boolean, active: Boolean = true) {
+ if (!active) return // tidak digambar / tidak dianimasi saat player tersembunyi
  val tr = rememberInfiniteTransition(label = "wave")
  val time by tr.animateFloat(0f, (2 * PI).toFloat(),
   infiniteRepeatable(tween(16000, easing = LinearEasing)), label = "t")
  val energy by animateFloatAsState(if (playing) 1f else 0.2f, tween(900), label = "e")
- val c1 = MaterialTheme.colorScheme.primary
- val c2 = MaterialTheme.colorScheme.tertiary
- val steps = 140
- val cosT = remember { FloatArray(steps + 1) { cos(it * 2f * PI.toFloat() / steps) } }
- val sinT = remember { FloatArray(steps + 1) { sin(it * 2f * PI.toFloat() / steps) } }
+ val cs = MaterialTheme.colorScheme
+ val c1 = cs.primary; val c2 = cs.tertiary; val c3 = cs.secondary
+ val steps = 120; val rings = 32; val bands = 8; val per = rings / bands
+ // tabel trigonometri dihitung sekali; per frame hanya perkalian/penjumlahan
+ val tabs = remember {
+  val cx = FloatArray(steps + 1); val sx = FloatArray(steps + 1)
+  val sk = Array(WK.size) { FloatArray(steps + 1) }; val ck = Array(WK.size) { FloatArray(steps + 1) }
+  for (i in 0..steps) {
+   val a = i * 2f * PI.toFloat() / steps
+   cx[i] = cos(a); sx[i] = sin(a)
+   for (j in WK.indices) { sk[j][i] = sin(WK[j] * a); ck[j][i] = cos(WK[j] * a) }
+  }
+  arrayOf<Any>(cx, sx, sk, ck)
+ }
+ @Suppress("UNCHECKED_CAST")
+ val cosA = tabs[0] as FloatArray
+ val sinA = tabs[1] as FloatArray
+ @Suppress("UNCHECKED_CAST")
+ val sk = tabs[2] as Array<FloatArray>
+ @Suppress("UNCHECKED_CAST")
+ val ck = tabs[3] as Array<FloatArray>
  val path = remember { Path() }
+ val amp = remember { FloatArray(WK.size) }
+ val ph = remember { FloatArray(WK.size) }
  Canvas(Modifier.fillMaxWidth().aspectRatio(1f)) {
   val cx = size.width / 2; val cy = size.height / 2
-  val inner = 136.dp.toPx()
-  val spread = (size.width / 2 + 22.dp.toPx() - inner).coerceAtLeast(28.dp.toPx())
-  val rings = 34
+  val inner = 130.dp.toPx()
+  val spread = (size.width / 2 + 22.dp.toPx() - inner).coerceAtLeast(30.dp.toPx())
   val tm = time; val e = energy
-  val pulse = 0.9f + 0.1f * sin(tm * 6f)
+  // denyut ritmis (~120 bpm) + amplitudo tiap harmonik yang berubah pelan -> bentuk terus bermorfosis
+  val pb = 0.5f + 0.5f * sin(tm * 32f); val pulse = pb * pb * pb * pb * pb * pb
+  amp[0] = 0.60f + 0.40f * sin(tm + 1f)
+  amp[1] = 0.60f + 0.40f * sin(tm * 2f + 2f)
+  amp[2] = 0.50f + 0.50f * sin(tm * 3f)
+  amp[3] = (0.35f + 0.35f * sin(tm * 5f + 1f)) * (0.4f + 0.6f * pulse)
+  amp[4] = 0.30f * (0.3f + 0.7f * pulse)
+  val norm = amp.sum()
+  val boost = 0.85f + 0.30f * pulse
+  // cahaya lembut di belakang ring
+  drawCircle(Brush.radialGradient(listOf(c1.copy(alpha = 0.22f * e), Color.Transparent),
+   Offset(cx, cy), inner + spread * 1.1f), inner + spread * 1.1f, Offset(cx, cy))
   val stroke = Stroke(0.9.dp.toPx())
-  for (k in rings - 1 downTo 0) {
-   val t = (k + 1f) / rings
-   path.reset()
-   for (i in 0..steps) {
-    val a = i * 2f * PI.toFloat() / steps
-    val th = a + t * 1.4f // puntiran antar ring -> efek pusaran
-    val w = sin(3 * th + 2 * tm) * 0.45f + sin(5 * th - 3 * tm) * 0.25f +
-      sin(2 * th + tm) * 0.35f + sin(7 * th + 4 * tm) * 0.12f
-    val sh = 0.5f + 0.5f * (w / 1.17f)
-    val r = inner + spread * t * (0.22f + 0.78f * e * sh) * pulse
-    val x = cx + r * cosT[i]; val y = cy + r * sinT[i]
-    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+  for (bd in bands - 1 downTo 0) {
+   path.rewind()
+   for (q in 0 until per) {
+    val t = (bd * per + q + 1f) / rings
+    for (j in WK.indices) ph[j] = WK[j] * t * 1.5f + WN[j] * (tm - 0.7f * t)
+    val ps0 = sin(ph[0]); val pc0 = cos(ph[0]); val ps1 = sin(ph[1]); val pc1 = cos(ph[1])
+    val ps2 = sin(ph[2]); val pc2 = cos(ph[2]); val ps3 = sin(ph[3]); val pc3 = cos(ph[3])
+    val ps4 = sin(ph[4]); val pc4 = cos(ph[4])
+    val rMax = spread * t * 0.92f * boost
+    for (i in 0..steps) {
+     // sin(ka+φ) = sin(ka)cosφ + cos(ka)sinφ
+     val w = amp[0] * (sk[0][i] * pc0 + ck[0][i] * ps0) + amp[1] * (sk[1][i] * pc1 + ck[1][i] * ps1) +
+       amp[2] * (sk[2][i] * pc2 + ck[2][i] * ps2) + amp[3] * (sk[3][i] * pc3 + ck[3][i] * ps3) +
+       amp[4] * (sk[4][i] * pc4 + ck[4][i] * ps4)
+     val n = 0.5f + 0.5f * (w / norm)
+     val r = inner + rMax * (0.10f + 0.90f * e * n * n) // n^2 -> puncak lebih runcing
+     val x = cx + r * cosA[i]; val y = cy + r * sinA[i]
+     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    path.close()
    }
-   path.close()
-   drawPath(path, lerp(c1, c2, t).copy(alpha = 0.95f - 0.75f * t), style = stroke)
+   val tb = (bd + 0.5f) / bands
+   val col = if (tb < 0.5f) lerp(c1, c2, tb * 2f) else lerp(c2, c3, (tb - 0.5f) * 2f)
+   drawPath(path, col.copy(alpha = 0.95f - 0.78f * tb), style = stroke)
   }
  }
 }
@@ -248,10 +292,11 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  var shuffle by remember{mutableStateOf(false)}
  var repeat by remember{mutableIntStateOf(Player.REPEAT_MODE_OFF)}
  val pos=remember{mutableStateOf(0L)}
- val sheet = remember{Animatable(0f)}            // 0 = tersembunyi, 1 = terbuka penuh
- var hPx by remember{mutableFloatStateOf(1f)}
- val expanded by remember{derivedStateOf{sheet.value>0.5f}}
- val sheetVisible by remember{derivedStateOf{sheet.value>0f}}
+ var sheetP by remember{mutableFloatStateOf(0f)}   // 0 = tersembunyi, 1 = terbuka penuh
+ var hPx by remember{mutableFloatStateOf(3000f)}
+ var sheetJob by remember{mutableStateOf<Job?>(null)}
+ val expanded by remember{derivedStateOf{sheetP>0.5f}}
+ val sheetVisible by remember{derivedStateOf{sheetP>0f}}
  
  var tab by remember{mutableIntStateOf(appSp.getInt("tab", 0))}
  var detail by remember{mutableStateOf<String?>(appSp.getString("detail", null))}
@@ -349,16 +394,23 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   restored = true
  }
 
- BackHandler(expanded||detail!=null){if(expanded)scope.launch{sheet.animateTo(0f)} else detail=null}
+ fun animateSheet(target:Float,vel:Float=0f){
+  sheetJob?.cancel()
+  sheetJob=scope.launch{
+   animate(sheetP,target,vel,spring(dampingRatio=0.9f,stiffness=Spring.StiffnessMedium)){v,_->sheetP=v.coerceIn(0f,1f)}
+  }
+ }
+ BackHandler(expanded||detail!=null){if(expanded)animateSheet(0f) else detail=null}
  fun play(l:List<Song>,i:Int){ctrl?.run{setMediaItems(l.map{it.item()},i,0L);prepare();play()}}
  val cur=remember(byId,nowId){nowId?.toLongOrNull()?.let{byId[it]}}
- val dragState = rememberDraggableState{ dy -> scope.launch{ sheet.snapTo((sheet.value - dy/hPx).coerceIn(0f,1f)) } }
+ val dragState = rememberDraggableState{ dy -> sheetP = (sheetP - dy/hPx).coerceIn(0f,1f) }
  fun settle(v:Float){
-  val target = when{ v < -700f -> 1f; v > 700f -> 0f; sheet.value>0.5f -> 1f; else -> 0f }
-  scope.launch{ sheet.animateTo(target, spring(dampingRatio=0.85f, stiffness=Spring.StiffnessMediumLow), initialVelocity = -v/hPx) }
+  val target = when{ v < -700f -> 1f; v > 700f -> 0f; sheetP>0.5f -> 1f; else -> 0f }
+  animateSheet(target, -v/hPx)
  }
  // geser naik: buka pemutar, geser turun: tutup (mengikuti jari)
- val dragMod = Modifier.draggable(dragState, Orientation.Vertical, enabled = cur!=null, onDragStopped = { settle(it) })
+ val dragMod = Modifier.draggable(dragState, Orientation.Vertical, enabled = cur!=null,
+  onDragStarted = { sheetJob?.cancel() }, onDragStopped = { settle(it) })
  val tabTitles=listOf("Home","Album","Artis","Playlist")
  var showSong by remember{mutableStateOf(false)}
  LaunchedEffect(nowId,playing){
@@ -406,14 +458,14 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
   }
  }
  
- if(sheetVisible){
+ // Now sudah dikomposisi sebelumnya, jadi swipe pertama tidak ada jeda; hanya digeser lewat graphicsLayer
+ if(cur!=null){
   Box(Modifier.fillMaxSize().graphicsLayer{
-   val p = sheet.value
+   val p = sheetP
    translationY = (1f-p)*hPx
-   val r = (1f-p).coerceIn(0f,1f)*28.dp.toPx()
-   shape = RoundedCornerShape(r,r,0f,0f); clip = true
+   alpha = if(p>0f) 1f else 0f
   }){
-   cur?.let{ Now(it,ctrl,playing,pos,shuffle,repeat,dragMod){ scope.launch{ sheet.animateTo(0f) } } }
+   Now(cur,ctrl,playing,pos,shuffle,repeat,sheetVisible,dragMod){ animateSheet(0f) }
   }
  }
  }
@@ -456,17 +508,17 @@ fun fmt(ms:Long)="%d:%02d".format(ms/60000,ms/1000%60)
  Row(Modifier.fillMaxWidth(),Arrangement.SpaceBetween){Text(fmt(p));Text(fmt(dur))}
 }
 
-@Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,shuffle:Boolean,repeat:Int,dragMod:Modifier,close:()->Unit){
+@Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,shuffle:Boolean,repeat:Int,visible:Boolean,dragMod:Modifier,close:()->Unit){
  var lines by remember(s.id){mutableStateOf<List<Line>?>(null)}
  LaunchedEffect(s.id){lines=Lyrics.get(s)}
  val idx by remember(s.id){derivedStateOf{lines?.indexOfLast{it.ms<=pos.value}?:-1}}
  val on=MaterialTheme.colorScheme.primary;val off=MaterialTheme.colorScheme.onSurface.copy(alpha=0.5f)
  
- Surface(Modifier.fillMaxSize().then(dragMod)){Box(Modifier.fillMaxSize()){
+ Surface(Modifier.fillMaxSize().then(dragMod),shape=RoundedCornerShape(topStart=28.dp,topEnd=28.dp)){Box(Modifier.fillMaxSize()){
   Column(Modifier.fillMaxSize().navigationBarsPadding().padding(horizontal=24.dp)){
    
    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-    VisualizerWave(playing) 
+    VisualizerWave(playing,visible)
     Cover(s, Modifier.size(280.dp), shape = CircleShape, px = 700, zoom = 1.12f)
    }
 
