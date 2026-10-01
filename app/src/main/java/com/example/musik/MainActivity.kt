@@ -160,6 +160,9 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  val tr = rememberInfiniteTransition(label = "wave")
  val time by tr.animateFloat(0f, (2 * PI).toFloat(),
   infiniteRepeatable(tween(16000, easing = LinearEasing)), label = "t")
+ // rotasi sangat pelan: satu putaran penuh 60 detik (ubah angkanya untuk lebih cepat/lambat)
+ val rot by tr.animateFloat(0f, 360f,
+  infiniteRepeatable(tween(60000, easing = LinearEasing)), label = "rot")
  val cs = MaterialTheme.colorScheme
  val c1 = cs.primary; val c2 = cs.tertiary; val c3 = cs.secondary
  val steps = 120; val rings = 32; val bands = 8; val per = rings / bands
@@ -184,20 +187,20 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  val path = remember { Path() }
  val amp = remember { FloatArray(WK.size) }
  val ph = remember { FloatArray(WK.size) }
- Canvas(Modifier.fillMaxWidth().aspectRatio(1f)) {
+ Canvas(Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { rotationZ = rot }) {
   val cx = size.width / 2; val cy = size.height / 2
   val inner = 130.dp.toPx()
   val spread = 110.dp.toPx() // jarak jangkauan gelombang dari cover (naikkan/turunkan sesuai selera)
   val tm = time; val e = energy
-  // denyut ritmis (~120 bpm) + amplitudo tiap harmonik yang berubah pelan -> bentuk terus bermorfosis
-  val pb = 0.5f + 0.5f * sin(tm * 32f); val pulse = pb * pb * pb * pb * pb * pb
+  // tanpa denyut ritmis: amplitudo tiap harmonik berubah pelan -> bentuk terus bermorfosis
   amp[0] = 0.60f + 0.40f * sin(tm + 1f)
   amp[1] = 0.60f + 0.40f * sin(tm * 2f + 2f)
   amp[2] = 0.50f + 0.50f * sin(tm * 3f)
-  amp[3] = (0.35f + 0.35f * sin(tm * 5f + 1f)) * (0.4f + 0.6f * pulse)
-  amp[4] = 0.30f * (0.3f + 0.7f * pulse)
+  amp[3] = (0.35f + 0.35f * sin(tm * 5f + 1f)) * 0.55f
+  amp[4] = 0.15f * (1f + 0.5f * sin(tm * 4f))
   val norm = amp.sum()
-  val boost = 0.85f + 0.55f * pulse
+  // mengembang-mengempis perlahan (periode ~5,3 dtk, integer terhadap loop 16 dtk -> mulus)
+  val boost = 1f + 0.12f * sin(tm * 3f)
   // cahaya lembut di belakang ring
   drawCircle(Brush.radialGradient(listOf(c1.copy(alpha = 0.22f * e), Color.Transparent),
    Offset(cx, cy), inner + spread * 1.1f), inner + spread * 1.1f, Offset(cx, cy))
@@ -314,6 +317,8 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  
  // Stay awake: layar tetap menyala selama musik diputar, dipicu dengan menekan cover di pemutar
  var stayAwake by remember{mutableStateOf(appSp.getBoolean("stay_awake",false))}
+ // Pop-up penjelasan stay awake, hanya muncul sekali (saat pertama kali diaktifkan)
+ var showStayAwakeHint by remember{mutableStateOf(false)}
  val rootView=LocalView.current
  LaunchedEffect(stayAwake){appSp.edit().putBoolean("stay_awake",stayAwake).apply()}
  DisposableEffect(stayAwake,playing){
@@ -492,9 +497,24 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
    translationY = (1f-p)*hPx
    alpha = if(p>0f) 1f else 0f
   }){
-   Now(cur,ctrl,playing,pos,shuffle,repeat,sheetVisible,dragMod,stayAwake,{stayAwake=!stayAwake}){ animateSheet(0f) }
+   Now(cur,ctrl,playing,pos,shuffle,repeat,sheetVisible,dragMod,stayAwake,{
+    val turnOn=!stayAwake
+    stayAwake=turnOn
+    // pop-up cara pakai, hanya sekali: saat stay awake pertama kali diaktifkan
+    if(turnOn&&!appSp.getBoolean("stay_awake_hint_shown",false)){
+     appSp.edit().putBoolean("stay_awake_hint_shown",true).apply()
+     showStayAwakeHint=true
+    }
+   }){ animateSheet(0f) }
   }
  }
+
+ if(showStayAwakeHint)AlertDialog(
+  onDismissRequest={showStayAwakeHint=false},
+  title={Text("Stay awake aktif")},
+  text={Text("Layar akan tetap menyala selama musik diputar. Tekan cover di pemutar kapan saja untuk menyalakan atau mematikan fitur ini.")},
+  confirmButton={TextButton({tick();showStayAwakeHint=false}){Text("Mengerti")}}
+ )
  }
 }
 
