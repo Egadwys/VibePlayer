@@ -312,6 +312,18 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  val expanded by remember{derivedStateOf{sheetP>0.5f}}
  val sheetVisible by remember{derivedStateOf{sheetP>0f}}
  
+ // Stay awake: layar tetap menyala selama musik diputar, dipicu dengan menekan cover di pemutar
+ var stayAwake by remember{mutableStateOf(appSp.getBoolean("stay_awake",false))}
+ val rootView=LocalView.current
+ LaunchedEffect(stayAwake){appSp.edit().putBoolean("stay_awake",stayAwake).apply()}
+ DisposableEffect(stayAwake,playing){
+  rootView.keepScreenOn=stayAwake&&playing
+  onDispose{rootView.keepScreenOn=false}
+ }
+ DisposableEffect(stayAwake){
+  if(stayAwake)StayAwake.show(c) else StayAwake.hide(c)
+  onDispose{StayAwake.hide(c)}
+ }
  var tab by remember{mutableIntStateOf(appSp.getInt("tab", 0))}
  var detail by remember{mutableStateOf<String?>(appSp.getString("detail", null))}
  val pagerState = rememberPagerState(initialPage = tab) { 4 }
@@ -480,7 +492,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
    translationY = (1f-p)*hPx
    alpha = if(p>0f) 1f else 0f
   }){
-   Now(cur,ctrl,playing,pos,shuffle,repeat,sheetVisible,dragMod){ animateSheet(0f) }
+   Now(cur,ctrl,playing,pos,shuffle,repeat,sheetVisible,dragMod,stayAwake,{stayAwake=!stayAwake}){ animateSheet(0f) }
   }
  }
  }
@@ -525,7 +537,7 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
  Row(Modifier.fillMaxWidth(),Arrangement.SpaceBetween){Text(fmt(p));Text(fmt(dur))}
 }
 
-@Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,shuffle:Boolean,repeat:Int,visible:Boolean,dragMod:Modifier,close:()->Unit){
+@Composable fun Now(s:Song,ctrl:MediaController?,playing:Boolean,pos:State<Long>,shuffle:Boolean,repeat:Int,visible:Boolean,dragMod:Modifier,stayAwake:Boolean,onStayAwake:()->Unit,close:()->Unit){
  var lines by remember(s.id){mutableStateOf<List<Line>?>(null)}
  LaunchedEffect(s.id){lines=Lyrics.get(s)}
  val idx by remember(s.id){derivedStateOf{lines?.indexOfLast{it.ms<=pos.value}?:-1}}
@@ -537,7 +549,11 @@ private val WN = intArrayOf(1, 2, -3, 4, -6)
    
    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
     VisualizerWave(playing,visible)
-    Cover(s, Modifier.size(280.dp), shape = CircleShape, px = 700, zoom = 1.12f)
+    // tekan cover = aktif/nonaktifkan stay awake (cincin di sekeliling cover menandakan aktif)
+    Box(Modifier.size(280.dp).clip(CircleShape).clickable{tick();onStayAwake()}
+     .then(if(stayAwake)Modifier.border(3.dp,on,CircleShape) else Modifier)){
+     Cover(s, Modifier.fillMaxSize(), shape = CircleShape, px = 700, zoom = 1.12f)
+    }
    }
 
    Box(Modifier.fillMaxWidth().height(100.dp), Alignment.CenterStart){
