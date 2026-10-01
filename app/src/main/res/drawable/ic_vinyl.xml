@@ -1,8 +1,40 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
- <path android:fillColor="#0B0B0B" android:pathData="M54,54m-32,0a32,32 0 1,0 64,0a32,32 0 1,0 -64,0"/>
- <path android:strokeColor="#44FFFFFF" android:strokeWidth="0.8" android:fillColor="#00000000" android:pathData="M54,54m-26,0a26,26 0 1,0 52,0a26,26 0 1,0 -52,0"/>
- <path android:strokeColor="#44FFFFFF" android:strokeWidth="0.8" android:fillColor="#00000000" android:pathData="M54,54m-21,0a21,21 0 1,0 42,0a21,21 0 1,0 -42,0"/>
- <path android:strokeColor="#44FFFFFF" android:strokeWidth="0.8" android:fillColor="#00000000" android:pathData="M54,54m-16,0a16,16 0 1,0 32,0a16,16 0 1,0 -32,0"/>
- <path android:fillColor="#26A69A" android:pathData="M54,54m-10,0a10,10 0 1,0 20,0a10,10 0 1,0 -20,0"/>
- <path android:fillColor="#0B0B0B" android:pathData="M54,54m-2,0a2,2 0 1,0 4,0a2,2 0 1,0 -4,0"/>
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1254"
+    android:viewportHeight="1254">
+
+    <!-- Background hitam berbentuk lingkaran -->
+    <path
+        android:fillColor="#050709"
+        android:pathData="M116,605 a507,507 0 1,0 1014,0 a507,507 0 1,0 -1014,0" />
+
+    <!-- Lingkaran luar -->
+    <path
+        android:strokeColor="#E8F0F8"
+        android:strokeWidth="4"
+        android:pathData="M116,605 a507,507 0 1,0 1014,0 a507,507 0 1,0 -1014,0" />
+
+    <!-- Lingkaran tengah -->
+    <path
+        android:strokeColor="#E8F0F8"
+        android:strokeWidth="4"
+        android:pathData="M199,604 a425,425 0 1,0 850,0 a425,425 0 1,0 -850,0" />
+
+    <!-- Lingkaran dalam -->
+    <path
+        android:strokeColor="#E8F0F8"
+        android:strokeWidth="4"
+        android:pathData="M251,604 a373,373 0 1,0 746,0 a373,373 0 1,0 -746,0" />
+
+    <!-- Huruf V + M -->
+    <path
+        android:fillColor="#1AAFAA"
+        android:pathData="M316,454 L413,454 L511,629 L623,454 L685,454 L769,572 L864,454 L928,454 L928,773 L851,773 L851,577 L766,689 L662,546 L511,780 Z" />
+
+    <!-- Bentuk "i" / atap di tengah -->
+    <path
+        android:fillColor="#1AAFAA"
+        android:pathData="M620,648 L662,584 L688,622 L688,773 L620,773 Z" />
 </vector>
